@@ -1,0 +1,19 @@
+{
+	"name": "Kaggle-bird-clef-2023",
+
+	"dockerComposeFile": "../docker-compose.yml",
+	"service": "kaggle-birdclef2023",
+
+	"workspaceFolder": "/workspace",
+
+	"settings": {},
+
+	"extensions": [
+		"ms-python.python",
+		"ms-python.vscode-pylance",
+		"donjayamanne.githistory",
+		"eamodio.gitlens",
+		"ryuta46.multi-command"
+	]
+
+}
