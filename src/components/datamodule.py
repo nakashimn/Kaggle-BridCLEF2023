@@ -1,74 +1,135 @@
 import numpy as np
 import pandas as pd
-from torchvision.io import read_image
+import librosa
 import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from pytorch_lightning import LightningDataModule
-from transformers import ViTFeatureExtractor
+from transformers import WhisperFeatureExtractor
 import traceback
 
 ################################################################################
 # Basic
 ################################################################################
-
-class ImgRecogDataset(Dataset):
+class BirdClefDataset(Dataset):
     def __init__(self, df, config, transform=None):
         self.config = config
-        self.filepaths = self.read_filepaths(df)
-        self.feature_extractor = self.create_feature_extractor()
+        self.filepaths = self._read_filepaths(df)
+        self.feature_extractor = self._create_feature_extractor()
         self.labels = None
         if self.config["label"] in df.keys():
-            self.labels = self.read_labels(df)
+            self.labels = self._read_labels(df[self.config["label"]])
         self.transform = transform
 
     def __len__(self):
         return len(self.filepaths)
 
     def __getitem__(self, idx):
-        img = read_image(self.filepaths[idx])
+        sound = self._read_sound(self.filepaths[idx])
         if self.transform is not None:
-            img = self.transform(img)
-        feature = self.extract_feature(img)
+            sound = self.transform(sound)
+        feature = self._extract_feature(sound)
         if self.labels is not None:
             labels = self.labels[idx]
             return feature, labels
         return feature
 
-    def read_filepaths(self, df):
+    def _read_filepaths(self, df):
         values = df["filepath"].values
         return values
 
-    def create_feature_extractor(self):
-        feature_extractor = ViTFeatureExtractor.from_pretrained(
+    def _create_feature_extractor(self):
+        feature_extractor = WhisperFeatureExtractor.from_pretrained(
             self.config["base_model_name"]
         )
         return feature_extractor
 
-    def extract_feature(self, imgs):
-        feature = self.feature_extractor(imgs, return_tensors="pt")
-        feature["pixel_values"] = feature["pixel_values"].squeeze()
+    def _read_sound(self, filepath):
+        sound_org, _ = librosa.load(
+            filepath, sr=self.config["sampling_rate"]["org"]
+        )
+        sound = librosa.resample(
+            sound_org,
+            orig_sr=self.config["sampling_rate"]["org"],
+            target_sr=self.config["sampling_rate"]["target"],
+        )
+        return sound
+
+    def _extract_feature(self, sound):
+        feature = self.feature_extractor(
+            sound,
+            sampling_rate=self.config["sampling_rate"]["target"],
+            return_tensors="pt"
+        )["input_features"].to(torch.float32)
         return feature
 
-    def read_labels(self, df):
-        labels = F.one_hot(
-            torch.tensor(
-                [self.config["labels"].index(d) for d in df[self.config["label"]]]
-            ),
-            num_classes=self.config["num_class"]
-        ).float()
+    def _read_labels(self, df):
+        labels = torch.tensor(df.apply(self._to_onehot), dtype=torch.float32)
         return labels
 
+    def _to_onehot(self, series):
+        return [1 if l in series else 0 for l in self.config["labels"]]
+
+
+class BirdClefPredDataset(Dataset):
+    def __init__(self, df, config, transform=None):
+        self.config = config
+        self.filepaths = self._read_filepaths(df)
+        self.end_sec = self._read_end_sec(df)
+        self.feature_extractor = self._create_feature_extractor()
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.filepaths)
+
+    def __getitem__(self, idx):
+        sound = self._read_sound(self.filepaths[idx], self.end_sec[idx])
+        if self.transform is not None:
+            sound = self.transform(sound)
+        feature = self._extract_feature(sound)
+        return feature
+
+    def _read_filepaths(self, df):
+        values = self.config["path"]["preddata"] \
+            + df["row_id"].str.replace("_[0-9]+$", "", regex=True) \
+            + ".ogg"
+        return values
+
+    def _read_end_sec(self, df):
+        end_sec = df["row_id"].apply(lambda x: x.split("_")[-1]).astype(int)
+        return end_sec
+
+    def _create_feature_extractor(self):
+        feature_extractor = WhisperFeatureExtractor.from_pretrained(
+            self.config["base_model_name"]
+        )
+        return feature_extractor
+
+    def _read_sound(self, filepath, end_sec):
+        sound_org, _ = librosa.load(
+            filepath,
+            sr=self.config["sampling_rate"]["org"],
+            offset=end_sec - self.config["chunk_sec"],
+            duration=self.config["duration_sec"]
+        )
+        sound = librosa.resample(
+            sound_org,
+            orig_sr=self.config["sampling_rate"]["org"],
+            target_sr=self.config["sampling_rate"]["target"],
+        )
+        return sound
+
+    def _extract_feature(self, sound):
+        feature = self.feature_extractor(
+            sound,
+            sampling_rate=self.config["sampling_rate"]["target"],
+            return_tensors="pt"
+        )["input_features"].to(torch.float32)
+        return feature
+
+
 class DataModule(LightningDataModule):
-    def __init__(
-        self,
-        df_train,
-        df_val,
-        df_pred,
-        Dataset,
-        config,
-        transforms
-    ):
+    def __init__(self, df_train, df_val, df_pred, Dataset, config, transforms):
         super().__init__()
 
         # const
@@ -76,36 +137,30 @@ class DataModule(LightningDataModule):
         self.df_train = df_train
         self.df_val = df_val
         self.df_pred = df_pred
-        self.transforms = self.read_transforms(transforms)
+        self.transforms = self._read_transforms(transforms)
 
         # class
         self.Dataset = Dataset
 
-    def read_transforms(self, transforms):
+    def _read_transforms(self, transforms):
         if transforms is not None:
             return transforms
         return {"train": None, "valid": None, "pred": None}
 
     def train_dataloader(self):
         dataset = self.Dataset(
-            self.df_train,
-            self.config["dataset"],
-            self.transforms["train"]
+            self.df_train, self.config["dataset"], self.transforms["train"]
         )
         return DataLoader(dataset, **self.config["train_loader"])
 
     def val_dataloader(self):
         dataset = self.Dataset(
-            self.df_val,
-            self.config["dataset"],
-            self.transforms["valid"]
+            self.df_val, self.config["dataset"], self.transforms["valid"]
         )
         return DataLoader(dataset, **self.config["val_loader"])
 
     def predict_dataloader(self):
         dataset = self.Dataset(
-            self.df_pred,
-            self.config["dataset"],
-            self.transforms["pred"]
+            self.df_pred, self.config["dataset"], self.transforms["pred"]
         )
         return DataLoader(dataset, **self.config["pred_loader"])

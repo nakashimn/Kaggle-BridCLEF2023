@@ -1,49 +1,58 @@
 import os
 import sys
 import pathlib
-from abc import ABCMeta, abstractmethod
-from tqdm import tqdm
 import numpy as np
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 from pytorch_lightning import LightningModule
-from transformers import ViTForImageClassification
+from transformers import WhisperForAudioClassification
 import traceback
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[0]))
 from loss_functions import FocalLoss
 
-################################################################################
-# Base Class
-################################################################################
-
-class ImgRecogModelBase(LightningModule, metaclass=ABCMeta):
+class BirdClefModel(LightningModule):
     def __init__(self, config):
         super().__init__()
 
         # const
         self.config = config
-        self.base_model = self.create_base_model()
-        self.dropout = nn.Dropout(self.config["dropout_rate"])
-
-        self.criterion = eval(config["loss"]["name"])(
-            **self.config["loss"]["params"]
-        )
+        self.model = self._create_model()
+        self.criterion = eval(config["loss"]["name"])(**self.config["loss"]["params"])
 
         # variables
         self.val_probs = np.nan
         self.val_labels = np.nan
         self.min_loss = np.nan
 
-    @abstractmethod
-    def create_base_model(self):
-        pass
+    def _create_model(self):
+        model = WhisperForAudioClassification.from_pretrained(
+            self.config["base_model_name"]
+        )
+        model.classifier = nn.Sequential(
+            nn.Linear(
+                model.projector.out_features,
+                self.config["dim_feature"],
+                bias=True
+            ),
+            nn.Linear(
+               self.config["dim_feature"],
+               self.config["num_class"],
+               bias=True
+            )
+        )
+        if not self.config["freeze_base_model"]:
+            return model
+        for param in model.encoder.parameters():
+            param.requires_grad = False
+        return model
 
-    @abstractmethod
-    def forward(self, imgs):
-        pass
+    def forward(self, features):
+        out = self.model(features.squeeze(dim=1).to(self.model.device))
+        logits = out.logits
+        return logits
 
     def training_step(self, batch, batch_idx):
         features, labels = batch
@@ -68,47 +77,6 @@ class ImgRecogModelBase(LightningModule, metaclass=ABCMeta):
         prob = logits.softmax(axis=1).detach()
         return {"prob": prob}
 
-    def configure_optimizers(self):
-        optimizer = eval(self.config["optimizer"]["name"])(
-            self.parameters(),
-            **self.config["optimizer"]["params"]
-        )
-        scheduler = eval(self.config["scheduler"]["name"])(
-            optimizer,
-            **self.config["scheduler"]["params"]
-        )
-        return [optimizer], [scheduler]
-
-################################################################################
-# Basic
-################################################################################
-
-class ImgRecogModel(ImgRecogModelBase):
-    def __init__(self, config):
-        super().__init__(config)
-
-        # const
-        self.fc = self.create_fully_connected()
-
-    def create_base_model(self):
-        base_model = ViTForImageClassification.from_pretrained(
-            self.config["base_model_name"]
-        )
-        if not self.config["freeze_base_model"]:
-            return base_model
-        for param in base_model.parameters():
-            param.requires_grad = False
-        return base_model
-
-    def create_fully_connected(self):
-        return nn.Linear(self.config["dim_feature"], self.config["num_class"])
-
-    def forward(self, features):
-        out = self.base_model(**features)
-        out = self.dropout(out[0])
-        out = self.fc(out)
-        return out
-
     def training_epoch_end(self, outputs):
         logits = torch.cat([out["logit"] for out in outputs])
         labels = torch.cat([out["label"] for out in outputs])
@@ -129,3 +97,12 @@ class ImgRecogModel(ImgRecogModelBase):
         self.val_labels = labels.detach().cpu().numpy()
 
         return super().validation_epoch_end(outputs)
+
+    def configure_optimizers(self):
+        optimizer = eval(self.config["optimizer"]["name"])(
+            self.parameters(), **self.config["optimizer"]["params"]
+        )
+        scheduler = eval(self.config["scheduler"]["name"])(
+            optimizer, **self.config["scheduler"]["params"]
+        )
+        return [optimizer], [scheduler]

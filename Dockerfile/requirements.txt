@@ -8,11 +8,11 @@ seaborn
 kaggle
 opencv-python
 lightgbm
-torch==1.11.0
+torch
 torchvision
-torchaudio==0.11.0
+torchaudio
 pytorch-lightning
-timm
+transformers
 mlflow
 pydub
 librosa

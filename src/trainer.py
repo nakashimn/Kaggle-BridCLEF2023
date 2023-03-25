@@ -1,29 +1,32 @@
 import os
 import shutil
+import copy
 import importlib
 import argparse
 import random
+import gc
 import subprocess
 import pathlib
 import glob
 import datetime
 import numpy as np
+import pandas as pd
 import torch
 import pytorch_lightning as pl
 from pytorch_lightning import callbacks
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import MLFlowLogger
-from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold, GroupKFold
+import sklearn.model_selection
 import traceback
 
 from components.preprocessor import DataPreprocessor
-from components.datamodule import ImgRecogDataset, DataModule
-from components.models import ImgRecogModel
+from components.datamodule import BirdClefDataset, DataModule
+from components.models import BirdClefModel
 from components.validations import MinLoss, ValidResult, ConfusionMatrix, F1Score, LogLoss
 
 class Trainer:
     def __init__(
-        self, Model, DataModule, Dataset, ValidResult, MinLoss,
+        self, Model, DataModule, Dataset,
         df_train, config, transforms, mlflow_logger
     ):
         # const
@@ -31,30 +34,19 @@ class Trainer:
         self.config = config
         self.df_train = df_train
         self.transforms = transforms
-        self.kfold = eval(self.config["kfold"]["name"])(
-            **self.config["kfold"]["params"]
-        )
 
         # Class
         self.Model = Model
         self.DataModule = DataModule
         self.Dataset = Dataset
-        self.MinLoss = MinLoss
-        self.ValidResult = ValidResult
 
         # variable
-        self.min_loss = self.MinLoss()
-        self.val_probs = self.ValidResult()
-        self.val_labels = self.ValidResult()
+        self.min_loss = MinLoss()
+        self.val_probs = ValidResult()
+        self.val_labels = ValidResult()
 
     def run(self):
-        iterator_kfold = enumerate(
-            self.kfold.split(
-                self.df_train,
-                self.df_train[self.config["label"]],
-                self.df_train[self.config["group"]]
-            )
-        )
+        iterator_kfold = self._create_kfold_iterator(self.df_train)
         for fold, (idx_train, idx_val) in iterator_kfold:
             # create datamodule
             datamodule = self._create_datamodule(idx_train, idx_val)
@@ -70,13 +62,24 @@ class Trainer:
                 self.val_probs.append(val_probs)
                 self.val_labels.append(val_labels)
 
-        # log
+            # log
         self.mlflow_logger.log_metrics({"train_min_loss": self.min_loss.value})
 
         # train final model
-        if self.config["train_with_alldata"]:
+        if self.config["train_with_alldata"] or (iterator_kfold is None):
             datamodule = self._create_datamodule_with_alldata()
             self._train_without_valid(datamodule, self.min_loss.value)
+
+    def _create_kfold_iterator(self, *df):
+        if self.config["kfold"]["params"]["n_splits"] <= 1:
+            return None
+        class_kfold = getattr(
+            sklearn.model_selection,
+            self.config["kfold"]["name"]
+        )
+        kfold = class_kfold(**self.config["kfold"]["params"])
+        iterator = enumerate(kfold.split(*df, **self.config["kfold"]["anchor"]))
+        return iterator
 
     def _create_datamodule(self, idx_train, idx_val):
         df_train_fold = self.df_train.loc[idx_train].reset_index(drop=True)
@@ -130,7 +133,11 @@ class Trainer:
             f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt"
         )
 
-        min_loss = model.min_loss
+        min_loss = copy.deepcopy(model.min_loss)
+
+        del model
+        gc.collect()
+
         return min_loss
 
     def _train_without_valid(self, datamodule, min_loss):
@@ -161,6 +168,9 @@ class Trainer:
             f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt"
         )
 
+        del model
+        gc.collect()
+
     def _valid(self, datamodule, fold):
         checkpoint_name = f"best_loss_{fold}"
         model = self.Model.load_from_checkpoint(
@@ -176,8 +186,12 @@ class Trainer:
 
         trainer.validate(model, datamodule=datamodule)
 
-        val_probs = model.val_probs
-        val_labels = model.val_labels
+        val_probs = copy.deepcopy(model.val_probs)
+        val_labels = copy.deepcopy(model.val_labels)
+
+        del model
+        gc.collect()
+
         return val_probs, val_labels
 
 def create_mlflow_logger(config):
@@ -227,7 +241,7 @@ def get_args():
         "-m", "--message",
         help="message for upload to kaggle datasets.",
         type=str,
-        required=True
+        required=False
     )
     return parser.parse_args()
 
@@ -246,18 +260,20 @@ if __name__=="__main__":
         f"./config/{args.config}.py"
     )
 
+    # torch setting
+    torch.set_float32_matmul_precision("medium")
+
     # Preprocess
     data_preprocessor = DataPreprocessor(config)
     fix_seed(config["random_seed"])
     df_train = data_preprocessor.train_dataset()
+    # df_train = data_preprocessor.train_dataset_primary()
 
     # Training
     trainer = Trainer(
-        ImgRecogModel,
+        BirdClefModel,
         DataModule,
-        ImgRecogDataset,
-        ValidResult,
-        MinLoss,
+        BirdClefDataset,
         df_train,
         config,
         None,
@@ -267,6 +283,7 @@ if __name__=="__main__":
 
     # Validation Result
 
-    # Update model
-    # update_model(config, f"./config/{args.config}.py")
-    # upload_model(config, args.message)
+    # # Update model
+    update_model(config, f"./config/{args.config}.py")
+    if args.message is not None:
+        upload_model(config, args.message)
