@@ -1,4 +1,4 @@
-version: '3.3'
+version: '3.8'
 services:
   kaggle-birdclef2023:
     build: ./Dockerfile
@@ -19,7 +19,5 @@ services:
       KAGGLE_USERNAME: ${KAGGLE_USERNAME}
       KAGGLE_KEY: ${KAGGLE_KEY}
       MLFLOW_TRACKING_URI: /workspace/log/mlruns/
-      TRAINING: "true"
       DISPLAY: host.docker.internal:0.0
-      PULSE_SERVER: tcp:host.docker.internal
     tty: true
