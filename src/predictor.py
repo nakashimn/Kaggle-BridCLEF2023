@@ -6,18 +6,18 @@ import numpy as np
 import pandas as pd
 import torch
 import librosa
+from torch.utils.data import DataLoader
 import pytorch_lightning as pl
-from pytorch_lightning.accelerators import CPUAccelerator, CUDAAccelerator
 import traceback
 
 from components.preprocessor import DataPreprocessor
 from components.datamodule import BirdClefPredDataset, DataModule
 from components.models import BirdClefModel
-from config.trial_v0 import config
+from config.sample import config
 
 class Predictor:
     def __init__(
-        self, Model, DataModule, Dataset, df_pred, config, transforms
+        self, Model, Dataset, df_pred, config, transforms
     ):
         # const
         self.config = config
@@ -26,39 +26,32 @@ class Predictor:
 
         # Class
         self.Model = Model
-        self.DataModule = DataModule
         self.Dataset = Dataset
 
         # variables
         self.probs = None
 
     def run(self):
-        # create datamodule
-        datamodule = self._create_datamodule()
+        # create dataloader
+        dataloader = self._create_dataloader()
 
         # predict
-        self.probs = self._predict(datamodule)
+        self.probs = self._predict(dataloader)
 
         return self.probs
 
-    def _create_datamodule(self):
-        datamodule = self.DataModule(
-            df_train=None,
-            df_val=None,
-            df_pred=self.df_pred,
-            Dataset=self.Dataset,
-            config=self.config["datamodule"],
-            transforms=self.transforms
+    def _create_dataloader(self):
+        dataset = self.Dataset(df_pred, config["datamodule"]["dataset"])
+        dataloader = DataLoader(
+            dataset=dataset,
+            num_workers=0,
+            batch_size=4,
+            shuffle=False,
+            drop_last=False
         )
-        return datamodule
+        return dataloader
 
-    def _predict(self, datamodule):
-        # define trainer
-        trainer = pl.Trainer(
-            logger=None,
-            **self.config["trainer"]
-        )
-
+    def _predict(self, dataloader):
         # load model
         model = self.Model.load_from_checkpoint(
             f"{self.config['path']['model_dir']}/{self.config['modelname']}.ckpt",
@@ -68,19 +61,17 @@ class Predictor:
         )
 
         # prediction
+        probs_batch = []
         model.eval()
         with torch.inference_mode():
-            preds = trainer.predict(model, datamodule=datamodule)
-        probs = np.concatenate([p["prob"].numpy() for p in preds], axis=0)
+            for data in tqdm(dataloader):
+                preds = model.predict_step(data, None)
+                probs_batch.append(preds["prob"].numpy())
+        probs = np.concatenate(probs_batch, axis=0)
         return probs
 
 class PredictorEnsemble(Predictor):
-    def _predict(self, datamodule):
-        # define trainer
-        trainer = pl.Trainer(
-            logger=None,
-            **self.config["trainer"]
-        )
+    def _predict(self, dataloader):
 
         probs_folds = []
         for fold in range(self.config["n_splits"]):
@@ -94,10 +85,13 @@ class PredictorEnsemble(Predictor):
             )
 
             # prediction
+            probs_batch = []
             model.eval()
             with torch.inference_mode():
-                preds = trainer.predict(model, datamodule=datamodule)
-            probs = np.concatenate([p["prob"].numpy() for p in preds], axis=0)
+                for data in tqdm(dataloader):
+                    preds = model.predict_step(data, None)
+                    probs_batch.append(preds["prob"].numpy())
+            probs = np.concatenate(probs_batch, axis=0)
             probs_folds.append(probs)
         probs_ensemble = np.mean(probs_folds, axis=0)
         return probs_ensemble
@@ -138,7 +132,6 @@ if __name__=="__main__":
         cls_predictor = Predictor
     predictor = cls_predictor(
         BirdClefModel,
-        DataModule,
         BirdClefPredDataset,
         df_pred,
         config,
