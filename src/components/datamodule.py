@@ -79,14 +79,17 @@ class BirdClefPredDataset(Dataset):
         self.feature_extractor = self._create_feature_extractor()
         self.transform = transform
 
+        # variables
+        self.wholesound = None
+
     def __len__(self):
         return len(self.filepaths)
 
     def __getitem__(self, idx):
-        sound = self._read_sound(self.filepaths[idx], self.end_sec[idx])
+        chunk = self._read_chunk(self.filepaths[idx], self.end_sec[idx])
         if self.transform is not None:
-            sound = self.transform(sound)
-        feature = self._extract_feature(sound)
+            chunk = self.transform(chunk)
+        feature = self._extract_feature(chunk)
         return feature
 
     def _read_filepaths(self, df):
@@ -105,23 +108,33 @@ class BirdClefPredDataset(Dataset):
         )
         return feature_extractor
 
-    def _read_sound(self, filepath, end_sec):
-        sound_org, _ = librosa.load(
-            filepath,
-            sr=self.config["sampling_rate"]["org"],
-            offset=end_sec - self.config["chunk_sec"],
-            duration=self.config["duration_sec"]
-        )
-        sound = librosa.resample(
-            sound_org,
-            orig_sr=self.config["sampling_rate"]["org"],
-            target_sr=self.config["sampling_rate"]["target"],
-        )
-        return sound
+    def _read_chunk(self, filepath, end_sec):
+        if self._should_load(end_sec):
+            self.wholesound = self._read_sound(filepath)
+        start_sec = end_sec - self.config["chunk_sec"]
+        idx_start = start_sec * self.config["sampling_rate"]["target"]
+        idx_end = (start_sec + self.config["duration_sec"]) * self.config["sampling_rate"]["target"]
+        chunk = self.wholesound[idx_start:idx_end]
+        return chunk
 
-    def _extract_feature(self, sound):
+    def _should_load(self, end_sec):
+        return (end_sec - self.config["chunk_sec"]) == 0
+
+    def _read_sound(self, filepath):
+        wholesound_org, _ = librosa.load(
+            filepath,
+            sr=self.config["sampling_rate"]["org"]
+        )
+        wholesound = librosa.resample(
+            wholesound_org,
+            orig_sr=self.config["sampling_rate"]["org"],
+            target_sr=self.config["sampling_rate"]["target"]
+        )
+        return wholesound
+
+    def _extract_feature(self, chunk):
         feature = self.feature_extractor(
-            sound,
+            chunk,
             sampling_rate=self.config["sampling_rate"]["target"],
             return_tensors="pt"
         )["input_features"].to(torch.float32)
