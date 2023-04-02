@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /workspace
 RUN apt-get update \
-    && apt-get install -y tzdata build-essential git git-lfs python python3-pip libgl1-mesa-dev libglib2.0-0 \
+    && apt-get install -y tzdata build-essential git git-lfs python python3-pip libgl1-mesa-dev libglib2.0-0 libsndfile-dev \
     && unlink /usr/bin/python \
     && ln -s /usr/bin/python3 /usr/bin/python \
     && unlink /usr/bin/pip \

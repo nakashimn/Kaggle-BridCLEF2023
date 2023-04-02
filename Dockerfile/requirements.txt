@@ -13,6 +13,6 @@ torchvision
 torchaudio
 pytorch-lightning
 transformers
-mlflow
 pydub
 librosa
+mlflow
