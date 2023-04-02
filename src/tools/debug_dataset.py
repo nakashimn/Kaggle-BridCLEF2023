@@ -44,3 +44,28 @@ for i in tqdm(range(dataset.__len__())):
 dataloader = DataLoader(dataset, num_workers=0, batch_size=4, shuffle=False, drop_last=False)
 for data in tqdm(dataloader):
     print(data)
+
+from transformers import Wav2Vec2Model, Wav2Vec2Config, Wav2Vec2FeatureExtractor
+from torch import nn
+
+duration_sec = 30
+snd, _ = librosa.load(df_train["filepath"][0], duration=duration_sec)
+feature_extractor = Wav2Vec2FeatureExtractor()
+feature = feature_extractor(snd)
+val = feature["input_values"]
+
+val[0].shape
+input_tensor = torch.tensor(val)
+
+from config.trial_v3 import config
+model_config = Wav2Vec2Config(**config["model"]["model_config"])
+model = Wav2Vec2Model(model_config)
+
+
+model.cpu()
+model.eval()
+result = model(input_tensor)
+result.last_hidden_state[:, 1].shape
+linear = nn.Linear(768, 265)
+res = linear(result.last_hidden_state[:, 0])
+res.shape
