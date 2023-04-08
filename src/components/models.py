@@ -7,7 +7,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 from pytorch_lightning import LightningModule
-from transformers import WhisperForAudioClassification
+from transformers import Wav2Vec2Model, Wav2Vec2Config
 import traceback
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[0]))
@@ -19,7 +19,7 @@ class BirdClefModel(LightningModule):
 
         # const
         self.config = config
-        self.model = self._create_model()
+        self.model, self.classifier = self._create_model()
         self.criterion = eval(config["loss"]["name"])(**self.config["loss"]["params"])
 
         # variables
@@ -28,30 +28,22 @@ class BirdClefModel(LightningModule):
         self.min_loss = np.nan
 
     def _create_model(self):
-        model = WhisperForAudioClassification.from_pretrained(
-            self.config["base_model_name"]
-        )
-        model.classifier = nn.Sequential(
-            nn.Linear(
-                model.projector.out_features,
-                self.config["dim_feature"],
-                bias=True
-            ),
-            nn.Linear(
-               self.config["dim_feature"],
-               self.config["num_class"],
-               bias=True
-            )
+        config = Wav2Vec2Config(**self.config["model_config"])
+        model = Wav2Vec2Model(config)
+        classifier = nn.Linear(
+            model.config.hidden_size,
+            self.config["num_class"],
+            bias=True
         )
         if not self.config["freeze_base_model"]:
-            return model
+            return model, classifier
         for param in model.encoder.parameters():
             param.requires_grad = False
-        return model
+        return model, classifier
 
     def forward(self, features):
         out = self.model(features.squeeze(dim=1).to(self.model.device))
-        logits = out.logits
+        logits = self.classifier(out.last_hidden_state[:, 0])
         return logits
 
     def training_step(self, batch, batch_idx):

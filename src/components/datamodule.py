@@ -5,7 +5,7 @@ import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from pytorch_lightning import LightningDataModule
-from transformers import WhisperFeatureExtractor
+from transformers import Wav2Vec2FeatureExtractor
 import traceback
 
 ################################################################################
@@ -39,15 +39,11 @@ class BirdClefDataset(Dataset):
         return values
 
     def _create_feature_extractor(self):
-        feature_extractor = WhisperFeatureExtractor.from_pretrained(
-            self.config["base_model_name"]
-        )
+        feature_extractor = Wav2Vec2FeatureExtractor()
         return feature_extractor
 
     def _read_sound(self, filepath):
-        sound_org, _ = librosa.load(
-            filepath, sr=self.config["sampling_rate"]["org"]
-        )
+        sound_org = np.load(filepath)["arr_0"]
         sound = librosa.resample(
             sound_org,
             orig_sr=self.config["sampling_rate"]["org"],
@@ -58,9 +54,12 @@ class BirdClefDataset(Dataset):
     def _extract_feature(self, sound):
         feature = self.feature_extractor(
             sound,
+            max_length=480000,
+            padding="max_length",
+            truncation=True,
             sampling_rate=self.config["sampling_rate"]["target"],
             return_tensors="pt"
-        )["input_features"].to(torch.float32)
+        )["input_values"].to(torch.float32)
         return feature
 
     def _read_labels(self, df):
@@ -103,9 +102,7 @@ class BirdClefPredDataset(Dataset):
         return end_sec
 
     def _create_feature_extractor(self):
-        feature_extractor = WhisperFeatureExtractor.from_pretrained(
-            self.config["base_model_name"]
-        )
+        feature_extractor = Wav2Vec2FeatureExtractor()
         return feature_extractor
 
     def _read_chunk(self, filepath, end_sec):
@@ -137,7 +134,7 @@ class BirdClefPredDataset(Dataset):
             chunk,
             sampling_rate=self.config["sampling_rate"]["target"],
             return_tensors="pt"
-        )["input_features"].to(torch.float32)
+        )["input_values"].to(torch.float32)
         return feature
 
 
