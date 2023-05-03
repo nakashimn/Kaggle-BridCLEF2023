@@ -34,6 +34,22 @@ class DataPreprocessor:
         df["labels"] = df_meta.apply(self._primary_label, axis=1)
         return df
 
+    def train_dataset_for_pretrain(self):
+        df = pd.DataFrame(
+            {"filepath": glob.glob(f"{self.config['path']['traindata']}/**/*.npz", recursive=True)}
+        )
+        return df
+
+    def train_dataset_for_bg_classifier(self):
+        df_meta = pd.read_csv(self.config["path"]["trainmeta"])
+        df_meta = self._cleansing(df_meta)
+        df = pd.DataFrame(
+            (self.config["path"]["traindata"] + df_meta["filename"]).values,
+            columns=["filepath"]
+        )
+        df["labels"] = df_meta.apply(self._activity, axis=1)
+        return df
+
     def test_dataset(self):
         df_meta = pd.read_csv(self.config["path"]["trainmeta"])
         df = pd.DataFrame(
@@ -72,6 +88,9 @@ class DataPreprocessor:
 
     def _primary_label(self, series):
         return [series["primary_label"]]
+
+    def _activity(self, series):
+        return [str(series["activity"])]
 
     def _create_submit_indices(self, df):
         dict_chunk = {

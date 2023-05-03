@@ -6,6 +6,7 @@ class SoundAugmentation:
     def __init__(
         self,
         sampling_rate=32000,
+        n_fft=2048,
         ratio_harmonic=0.0,
         ratio_pitch_shift=0.0,
         ratio_percussive=0.0,
@@ -17,6 +18,7 @@ class SoundAugmentation:
     ):
         # const
         self.sampling_rate = sampling_rate
+        self.n_fft = n_fft
         self.enable = {
             "pitch_shift": (ratio_pitch_shift > 0.0),
             "time_stretch": (ratio_time_stretch > 0.0),
@@ -46,6 +48,10 @@ class SoundAugmentation:
         return self.run(snd)
 
     def run(self, snd):
+        # check length
+        if len(snd) < self.n_fft:
+            return snd
+
         # harmonic
         if self._is_applied(self.config["harmonic"]["ratio"]):
             harmonic_margin = np.random.uniform(

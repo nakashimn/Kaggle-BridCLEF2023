@@ -23,7 +23,7 @@ from components.preprocessor import DataPreprocessor
 from components.datamodule import BirdClefDataset, DataModule
 from components.augmentation import SoundAugmentation
 from components.models import BirdClefModel
-from components.validations import MinLoss, ValidResult, ConfusionMatrix, F1Score, LogLoss
+from components.validations import MinLoss, ValidResult, ConfusionMatrix, CMeanAveragePrecision
 
 class Trainer:
     def __init__(
@@ -47,40 +47,46 @@ class Trainer:
         self.val_labels = ValidResult()
 
     def run(self):
-        iterator_kfold = self._create_kfold_iterator(self.df_train)
-        for fold, (idx_train, idx_val) in iterator_kfold:
-            # create datamodule
-            datamodule = self._create_datamodule(idx_train, idx_val)
 
-            # train crossvalid models
-            if fold in self.config["train_fold"]:
-                min_loss = self._train_with_crossvalid(datamodule, fold)
-                self.min_loss.update(min_loss)
+        idx_train, idx_val = self._split_dataset(self.df_train)
+        # create datamodule
+        datamodule = self._create_datamodule(idx_train, idx_val)
 
-            # valid
-            if fold in self.config["valid_fold"]:
-                val_probs, val_labels = self._valid(datamodule, fold)
-                self.val_probs.append(val_probs)
-                self.val_labels.append(val_labels)
+        # train crossvalid models
+        min_loss = self._train_with_crossvalid(datamodule, fold)
+        self.min_loss.update(min_loss)
 
-            # log
+        # valid
+        val_probs, val_labels = self._valid(datamodule, fold)
+        self.val_probs.append(val_probs)
+        self.val_labels.append(val_labels)
+
+        # log
         self.mlflow_logger.log_metrics({"train_min_loss": self.min_loss.value})
 
         # train final model
-        if self.config["train_with_alldata"] or (iterator_kfold is None):
+        if self.config["train_with_alldata"]:
             datamodule = self._create_datamodule_with_alldata()
             self._train_without_valid(datamodule, self.min_loss.value)
 
-    def _create_kfold_iterator(self, *df):
-        if self.config["kfold"]["params"]["n_splits"] <= 1:
-            return None
-        class_kfold = getattr(
-            sklearn.model_selection,
-            self.config["kfold"]["name"]
-        )
-        kfold = class_kfold(**self.config["kfold"]["params"])
-        iterator = enumerate(kfold.split(*df, **self.config["kfold"]["anchor"]))
-        return iterator
+    def _split_dataset(self, df):
+        # pickup minor label
+        df_start = df.loc[df["filename"].str.contains("_5.npz")]
+        counts = df_start["primary_label"].value_counts()
+        minor_labels = list(counts[counts<2].index)
+
+        # get training indices
+        idx_train = df.loc[
+            ~df["filename"].str.contains("_5.npz") |
+            df["primary_label"].isin(minor_labels)
+        ].index
+
+        # get validation indices
+        idx_val = df.loc[
+            df["filename"].str.contains("_5.npz") &
+            ~df["primary_label"].isin(minor_labels)
+        ].index
+    return idx_train, idx_val
 
     def _create_datamodule(self, idx_train, idx_val):
         df_train_fold = self.df_train.loc[idx_train].reset_index(drop=True)
@@ -269,9 +275,13 @@ if __name__=="__main__":
     fix_seed(config["random_seed"])
     # df_train = data_preprocessor.train_dataset()
     df_train = data_preprocessor.train_dataset_primary()
-    sound_augmentation = SoundAugmentation(
-        **config["augmentation"]
-    )
+
+    # Augmentation
+    sound_augmentation = None
+    if config["augmentation"] is not None:
+        sound_augmentation = SoundAugmentation(
+            **config["augmentation"]
+        )
     transforms = {
         "train": sound_augmentation,
         "valid": None,
@@ -291,6 +301,26 @@ if __name__=="__main__":
     trainer.run()
 
     # Validation Result
+    # confmat = ConfusionMatrix(
+    #     trainer.val_probs.values,
+    #     trainer.val_labels.values,
+    #     config["Metrics"]["confmat"]
+    # )
+    # fig_confmat = confmat.draw()
+    # fig_confmat.savefig(f"{config['path']['temporal_dir']}/confmat.png")
+    # mlflow_logger.experiment.log_artifact(
+    #     mlflow_logger.run_id,
+    #     f"{config['path']['temporal_dir']}/confmat.png"
+    # )
+    cmap = CMeanAveragePrecision(
+        trainer.val_probs.values,
+        trainer.val_labels.values,
+        config["Metrics"]["cmAP"]
+    ).calc()
+    mlflow_logger.log_metrics({
+        "cmAP": cmap
+    })
+    print(f"cmAP:{cmap:.03f}")
 
     # # Update model
     update_model(config, f"./config/{args.config}.py")

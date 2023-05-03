@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from sklearn.metrics import confusion_matrix, f1_score
+from sklearn.metrics import confusion_matrix, f1_score, average_precision_score
 import matplotlib.pyplot as plt
 import seaborn as sns
 import traceback
@@ -31,7 +31,7 @@ class ConfusionMatrix:
         self.labels = labels
 
         # variables
-        self.fig = plt.figure(figsize=[4, 4], tight_layout=True)
+        self.fig = plt.figure(figsize=[36, 36], tight_layout=True)
 
     def draw(self):
         idx_probs = np.argmax(self.probs, axis=1)
@@ -87,3 +87,31 @@ class LogLoss:
         log_probs = np.log(np.clip(norm_probs, self.prob_min, self.prob_max))
         self.logloss = -np.mean(np.sum(self.labels * log_probs, axis=1))
         return self.logloss
+
+class CMeanAveragePrecision:
+    def __init__(self, probs, labels, config):
+        # const
+        self.config = config
+        self.probs = probs
+        self.labels = labels
+
+        self.padded_probs = self._padding(self.probs, config["padding_num"])
+        self.padded_labels = self._padding(self.labels, config["padding_num"])
+
+    def _padding(self, values, padding_num):
+        padded_values = np.concatenate([
+            values,
+            np.ones(
+                [padding_num, values.shape[1]],
+                dtype=values.dtype
+            )
+        ])
+        return padded_values
+
+    def calc(self):
+        cmap = average_precision_score(
+            self.padded_labels,
+            self.padded_probs,
+            average="macro"
+        )
+        return cmap
