@@ -86,7 +86,7 @@ class Trainer:
             df["filename"].str.contains("_5.npz") &
             ~df["primary_label"].isin(minor_labels)
         ].index
-    return idx_train, idx_val
+        return idx_train, idx_val
 
     def _create_datamodule(self, idx_train, idx_val):
         df_train_fold = self.df_train.loc[idx_train].reset_index(drop=True)
