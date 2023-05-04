@@ -127,7 +127,7 @@ class Trainer:
         # define pytorch_lightning callbacks
         ###
         # define earlystopping
-        earystopping = EarlyStopping(
+        earlystopping = EarlyStopping(
             monitor="val_loss",
             **self.config["earlystopping"]
         )
@@ -143,7 +143,7 @@ class Trainer:
         # define trainer
         trainer = pl.Trainer(
             logger=self.mlflow_logger,
-            callbacks=[lr_monitor, loss_checkpoint, earystopping],
+            callbacks=[lr_monitor, loss_checkpoint, earlystopping],
             **self.config["trainer"],
         )
 
@@ -171,7 +171,7 @@ class Trainer:
         # define pytorch_lightning callbacks
         ###
         # define earlystopping
-        earystopping = EarlyStopping(
+        earlystopping = EarlyStopping(
             monitor="train_loss",
             stopping_threshold=min_loss,
             **self.config["earlystopping"]
@@ -188,7 +188,7 @@ class Trainer:
         # define trainer
         trainer = pl.Trainer(
             logger=self.mlflow_logger,
-            callbacks=[lr_monitor, loss_checkpoint, earystopping],
+            callbacks=[lr_monitor, loss_checkpoint, earlystopping],
             **self.config["trainer"],
         )
 
