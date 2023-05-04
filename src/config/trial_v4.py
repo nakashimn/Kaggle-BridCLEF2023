@@ -1,7 +1,4 @@
 config = {
-    "n_splits": 3,
-    "train_fold": [0, 1, 2],
-    "valid_fold": [0, 1, 2],
     "random_seed": 57,
     "pred_device": "cpu",
     "label": "labels",
@@ -53,19 +50,19 @@ config = {
         "none"
     ],
     "group": "group",
-    "experiment_name": "birdclef2023-trial-v3",
+    "experiment_name": "birdclef2023-trial-v4",
     "path": {
-        "traindata": "/data_on_ssd/birdclef-2023-modified/train_audio/",
-        "trainmeta": "/data_on_ssd/birdclef-2023-modified/train_metadata.csv",
-        "testdata": "/data_on_ssd/birdclef-2023-modified/train_audio/",
+        "traindata": "/kaggle/input/birdclef-2023-modified-5sec/train_audio/",
+        "trainmeta": "/kaggle/input/birdclef-2023-modified-5sec/train_metadata.csv",
+        "testdata": "/kaggle/input/birdclef-2023-modified-5sec/train_audio/",
         "preddata": "/data_on_ssd/birdclef-2023-modified/test_soundscapes/",
         "temporal_dir": "../tmp/artifacts/",
-        "model_dir": "/kaggle/input/birdclef2023-trial-v3/"
+        "model_dir": "/kaggle/input/birdclef2023-trial-v4/"
     },
     "modelname": "best_loss",
     "sampling_rate": 32000,
     "chunk_sec": 5,
-    "duration_sec": 30,
+    "duration_sec": 5,
     "pred_ensemble": False,
     "train_with_alldata": True
 }
@@ -82,9 +79,8 @@ config["augmentation"] = {
 }
 config["model"] = {
     "base_model_name": "/workspace/data/model/birdclef2023_pretrained/",
-    "dim_feature": 512,
+    "fc_feature_dim": 2048,
     "num_class": 265,
-    "dropout_rate": 0.5,
     "gradient_checkpointing": True,
     "freeze_base_model": False,
     "model_config": {
@@ -102,7 +98,7 @@ config["model"] = {
     "optimizer":{
         "name": "optim.RAdam",
         "params":{
-            "lr": 1e-3
+            "lr": 1e-4
         },
     },
     "scheduler":{
@@ -114,7 +110,7 @@ config["model"] = {
     }
 }
 config["earlystopping"] = {
-    "patience": 1
+    "patience": 3
 }
 config["checkpoint"] = {
     "dirpath": config["path"]["temporal_dir"],
@@ -128,21 +124,11 @@ config["trainer"] = {
     "accelerator": "gpu",
     "devices": 1,
     "max_epochs": 100,
-    "accumulate_grad_batches": 16,
+    "accumulate_grad_batches": 2,
     "fast_dev_run": False,
     "deterministic": False,
     "num_sanity_val_steps": 0,
     "precision": 32
-}
-config["kfold"] = {
-    "name": "KFold",
-    "params": {
-        "n_splits": config["n_splits"],
-        "shuffle": True,
-        "random_state": config["random_seed"]
-    },
-    "anchor": {
-    }
 }
 config["datamodule"] = {
     "dataset":{
@@ -157,17 +143,17 @@ config["datamodule"] = {
         "path": config["path"],
         "chunk_sec": config["chunk_sec"],
         "duration_sec": config["duration_sec"],
-        "max_length": 480000
+        "max_length": 80000
     },
     "train_loader": {
-        "batch_size": 4,
+        "batch_size": 32,
         "shuffle": True,
         "num_workers": 8,
         "pin_memory": True,
         "drop_last": True,
     },
     "val_loader": {
-        "batch_size": 4,
+        "batch_size": 32,
         "shuffle": False,
         "num_workers": 8,
         "pin_memory": True,

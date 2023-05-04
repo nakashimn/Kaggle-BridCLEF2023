@@ -53,14 +53,14 @@ config = {
         "none"
     ],
     "group": "group",
-    "experiment_name": "birdclef2023-trial-v3",
+    "experiment_name": "birdclef2023-trial-v4",
     "path": {
         "traindata": "/data_on_ssd/birdclef-2023-modified/train_audio/",
         "trainmeta": "/data_on_ssd/birdclef-2023-modified/train_metadata.csv",
         "testdata": "/data_on_ssd/birdclef-2023-modified/train_audio/",
         "preddata": "/data_on_ssd/birdclef-2023-modified/test_soundscapes/",
         "temporal_dir": "../tmp/artifacts/",
-        "model_dir": "/kaggle/input/birdclef2023-trial-v3/"
+        "model_dir": "/kaggle/input/birdclef2023-trial-v4/"
     },
     "modelname": "best_loss",
     "sampling_rate": 32000,
@@ -81,18 +81,9 @@ config["augmentation"] = {
     "range_rate_time_stretch": [0.9, 1.1]
 }
 config["model"] = {
-    "base_model_name": "/workspace/data/model/birdclef2023_pretrained/",
-    "dim_feature": 512,
+    "base_model_name": "efficientnet_b0",
     "num_class": 265,
-    "dropout_rate": 0.5,
     "gradient_checkpointing": True,
-    "freeze_base_model": False,
-    "model_config": {
-        "hidden_size": 256,
-        "num_hidden_layers": 4,
-        "num_attention_heads": 4,
-        "intermediate_size": 2048
-    },
     "loss": {
         "name": "nn.CrossEntropyLoss",
         "params": {
@@ -150,14 +141,17 @@ config["datamodule"] = {
         "num_class": config["model"]["num_class"],
         "label": config["label"],
         "labels": config["labels"],
-        "sampling_rate": {
-            "org": config["sampling_rate"],
-            "target": 16000
+        "melspec": {
+            "sr": config["sampling_rate"],
+            "n_mels": 256,
+            "n_fft": 2048,
+            "hop_length": 512,
+            "fmin": 16,
+            "fmax": 16386
         },
         "path": config["path"],
         "chunk_sec": config["chunk_sec"],
-        "duration_sec": config["duration_sec"],
-        "max_length": 480000
+        "duration_sec": config["duration_sec"]
     },
     "train_loader": {
         "batch_size": 4,
