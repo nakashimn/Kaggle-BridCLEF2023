@@ -53,11 +53,11 @@ class Trainer:
         datamodule = self._create_datamodule(idx_train, idx_val)
 
         # train crossvalid models
-        min_loss = self._train_with_crossvalid(datamodule, fold)
+        min_loss = self._train_with_crossvalid(datamodule, 0)
         self.min_loss.update(min_loss)
 
         # valid
-        val_probs, val_labels = self._valid(datamodule, fold)
+        val_probs, val_labels = self._valid(datamodule, 0)
         self.val_probs.append(val_probs)
         self.val_labels.append(val_labels)
 
@@ -69,23 +69,25 @@ class Trainer:
             datamodule = self._create_datamodule_with_alldata()
             self._train_without_valid(datamodule, self.min_loss.value)
 
-    def _split_dataset(self, df):
+    def _split_dataset(self, df, duration=5, ext="npz", th_counts=1):
+        anchor_word = f"_{duration:d}.{ext}"
         # pickup minor label
-        df_start = df.loc[df["filename"].str.contains("_5.npz")]
-        counts = df_start["primary_label"].value_counts()
-        minor_labels = list(counts[counts<2].index)
+        df_start = df.loc[df["filepath"].str.contains(anchor_word)]
+        counts = df_start["labels"].value_counts()
+        minor_labels = list(counts[counts<=th_counts].index)
 
         # get training indices
         idx_train = df.loc[
-            ~df["filename"].str.contains("_5.npz") |
-            df["primary_label"].isin(minor_labels)
+            ~df["filepath"].str.contains(anchor_word) |
+            df["labels"].isin(minor_labels)
         ].index
 
         # get validation indices
         idx_val = df.loc[
-            df["filename"].str.contains("_5.npz") &
-            ~df["primary_label"].isin(minor_labels)
+            df["filepath"].str.contains(anchor_word) &
+            ~df["labels"].isin(minor_labels)
         ].index
+        print(f"train:{len(idx_train)} / val:{len(idx_val)}")
         return idx_train, idx_val
 
     def _create_datamodule(self, idx_train, idx_val):
