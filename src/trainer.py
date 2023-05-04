@@ -91,8 +91,10 @@ class Trainer:
         return idx_train, idx_val
 
     def _create_datamodule(self, idx_train, idx_val):
+        # fold dataset
         df_train_fold = self.df_train.loc[idx_train].reset_index(drop=True)
         df_val_fold = self.df_train.loc[idx_val].reset_index(drop=True)
+        # create datamodule
         datamodule = self.DataModule(
             df_train=df_train_fold,
             df_val=df_val_fold,
@@ -104,7 +106,9 @@ class Trainer:
         return datamodule
 
     def _create_datamodule_with_alldata(self):
+        # create dummy data for validation
         df_val_dummy = self.df_train.iloc[:10]
+        # create datamodule
         datamodule = self.DataModule(
             df_train=self.df_train,
             df_val=df_val_dummy,
@@ -116,71 +120,93 @@ class Trainer:
         return datamodule
 
     def _train_with_crossvalid(self, datamodule, fold):
+        # create model
         model = self.Model(self.config["model"])
-        checkpoint_name = f"best_loss_{fold}"
 
+        ###
+        # define pytorch_lightning callbacks
+        ###
+        # define earlystopping
         earystopping = EarlyStopping(
             monitor="val_loss",
             **self.config["earlystopping"]
         )
+        # define learning rate monitor
         lr_monitor = callbacks.LearningRateMonitor()
+        # define check point
+        checkpoint_name = f"best_loss_{fold}"
         loss_checkpoint = callbacks.ModelCheckpoint(
             filename=checkpoint_name,
             **self.config["checkpoint"]
         )
 
+        # define trainer
         trainer = pl.Trainer(
             logger=self.mlflow_logger,
             callbacks=[lr_monitor, loss_checkpoint, earystopping],
             **self.config["trainer"],
         )
 
+        # train
         trainer.fit(model, datamodule=datamodule)
 
+        # logging
         self.mlflow_logger.experiment.log_artifact(
             self.mlflow_logger.run_id,
             f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt"
         )
-
         min_loss = copy.deepcopy(model.min_loss)
 
+        # clean memory
         del model
         gc.collect()
 
         return min_loss
 
     def _train_without_valid(self, datamodule, min_loss):
+        # create model
         model = self.Model(self.config["model"])
-        checkpoint_name = f"best_loss"
 
+        ###
+        # define pytorch_lightning callbacks
+        ###
+        # define earlystopping
         earystopping = EarlyStopping(
             monitor="train_loss",
             stopping_threshold=min_loss,
             **self.config["earlystopping"]
         )
+        # define learning rate monitor
         lr_monitor = callbacks.LearningRateMonitor()
+        # define check point
+        checkpoint_name = f"best_loss"
         loss_checkpoint = callbacks.ModelCheckpoint(
             filename=checkpoint_name,
             **self.config["checkpoint"]
         )
 
+        # define trainer
         trainer = pl.Trainer(
             logger=self.mlflow_logger,
             callbacks=[lr_monitor, loss_checkpoint, earystopping],
             **self.config["trainer"],
         )
 
+        # train
         trainer.fit(model, datamodule=datamodule)
 
+        # logging
         self.mlflow_logger.experiment.log_artifact(
             self.mlflow_logger.run_id,
             f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt"
         )
 
+        # clean memory
         del model
         gc.collect()
 
     def _valid(self, datamodule, fold):
+        # load model
         checkpoint_name = f"best_loss_{fold}"
         model = self.Model.load_from_checkpoint(
             f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt",
@@ -188,16 +214,20 @@ class Trainer:
         )
         model.eval()
 
+        # define trainer
         trainer = pl.Trainer(
             logger=self.mlflow_logger,
             **self.config["trainer"]
         )
 
+        # validation
         trainer.validate(model, datamodule=datamodule)
 
+        # get result
         val_probs = copy.deepcopy(model.val_probs)
         val_labels = copy.deepcopy(model.val_labels)
 
+        # clean memory
         del model
         gc.collect()
 
@@ -212,6 +242,7 @@ def create_mlflow_logger(config):
     return mlflow_logger
 
 def update_model(config, filepath_config):
+    # copy Models and ConfigFile from temporal_dir to model_dir
     filepaths_ckpt = glob.glob(f"{config['path']['temporal_dir']}/*.ckpt")
     dirpath_model = pathlib.Path(config["path"]["model_dir"])
     for filepath_ckpt in filepaths_ckpt:
