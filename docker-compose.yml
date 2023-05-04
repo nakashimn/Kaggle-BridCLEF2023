@@ -12,8 +12,10 @@ services:
            - driver: nvidia
              capabilities: ["gpu"]
     volumes:
+      - /mnt/wslg:/mnt/wslg
       - ./:/workspace:cached
       - ./kaggle:/kaggle:cached
+      - /mnt/c/Users/nakas/Data/birdclef-2023:/data_on_ssd:cached
     environment:
       TZ: Asia/Tokyo
       KAGGLE_USERNAME: ${KAGGLE_USERNAME}

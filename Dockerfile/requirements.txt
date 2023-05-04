@@ -11,8 +11,10 @@ lightgbm
 torch
 torchvision
 torchaudio
-pytorch-lightning
+pytorch-lightning==1.9.4
 transformers
+simpleaudio==1.0.4
 pydub
-librosa
-mlflow
+librosa==0.10.0
+pytz==2022.7.1
+mlflow==2.2.2
