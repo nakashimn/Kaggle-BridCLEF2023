@@ -105,6 +105,17 @@ class Trainer:
         )
         return datamodule
 
+    def _create_model(self, use_checkpoint=True, filepath_checkpoint=None):
+        if not use_checkpoint:
+            return self.Model(self.config["model"])
+        if not os.path.exists(filepath_checkpoint):
+            return self.Model(self.config["model"])
+        model = self.Model.load_from_checkpoint(
+            filepath_checkpoint,
+            config=self.config["model"]
+        )
+        return model
+
     def _create_datamodule_with_alldata(self):
         # create dummy data for validation
         df_val_dummy = self.df_train.iloc[:10]
@@ -121,7 +132,12 @@ class Trainer:
 
     def _train_with_crossvalid(self, datamodule, fold):
         # create model
-        model = self.Model(self.config["model"])
+        checkpoint_name = f"{config['modelname']}_{fold}"
+        filepath_checkpoint = f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
+        model = self._create_model(
+            config["use_checkpoint"],
+            filepath_checkpoint
+        )
 
         ###
         # define pytorch_lightning callbacks
@@ -134,7 +150,6 @@ class Trainer:
         # define learning rate monitor
         lr_monitor = callbacks.LearningRateMonitor()
         # define check point
-        checkpoint_name = f"best_loss_{fold}"
         loss_checkpoint = callbacks.ModelCheckpoint(
             filename=checkpoint_name,
             **self.config["checkpoint"]
@@ -165,7 +180,12 @@ class Trainer:
 
     def _train_without_valid(self, datamodule, min_loss):
         # create model
-        model = self.Model(self.config["model"])
+        checkpoint_name = config["modelname"]
+        filepath_checkpoint = f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
+        model = self._create_model(
+            self.config["use_checkpoint"],
+            filepath_checkpoint
+        )
 
         ###
         # define pytorch_lightning callbacks
@@ -179,7 +199,6 @@ class Trainer:
         # define learning rate monitor
         lr_monitor = callbacks.LearningRateMonitor()
         # define check point
-        checkpoint_name = f"best_loss"
         loss_checkpoint = callbacks.ModelCheckpoint(
             filename=checkpoint_name,
             **self.config["checkpoint"]
@@ -207,11 +226,9 @@ class Trainer:
 
     def _valid(self, datamodule, fold):
         # load model
-        checkpoint_name = f"best_loss_{fold}"
-        model = self.Model.load_from_checkpoint(
-            f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt",
-            config=self.config["model"]
-        )
+        checkpoint_name = f"{config['modelname']}_{fold}"
+        filepath_checkpoint = f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt"
+        model = self._create_model(filepath_checkpoint=filepath_checkpoint)
         model.eval()
 
         # define trainer
