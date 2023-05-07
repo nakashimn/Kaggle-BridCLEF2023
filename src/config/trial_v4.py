@@ -60,6 +60,7 @@ config = {
         "model_dir": "/kaggle/input/birdclef2023-trial-v4/"
     },
     "modelname": "best_loss",
+    "use_checkpoint": True,
     "sampling_rate": 32000,
     "chunk_sec": 5,
     "duration_sec": 5,
@@ -110,7 +111,7 @@ config["model"] = {
     }
 }
 config["earlystopping"] = {
-    "patience": 3
+    "patience": 2
 }
 config["checkpoint"] = {
     "dirpath": config["path"]["temporal_dir"],
@@ -171,7 +172,7 @@ config["Metrics"] = {
     "confmat": {
         "label": config["labels"]
     },
-    "cmap": {
+    "cmAP": {
         "padding_num": 5
     }
 }
