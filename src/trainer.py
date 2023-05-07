@@ -132,7 +132,7 @@ class Trainer:
 
     def _train_with_crossvalid(self, datamodule, fold):
         # create model
-        checkpoint_name = f"{config['modelname']}_{fold}"
+        checkpoint_name = f"{self.config['modelname']}_{fold}"
         filepath_checkpoint = f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
         model = self._create_model(
             config["use_checkpoint"],
@@ -180,7 +180,7 @@ class Trainer:
 
     def _train_without_valid(self, datamodule, min_loss):
         # create model
-        checkpoint_name = config["modelname"]
+        checkpoint_name = self.config["modelname"]
         filepath_checkpoint = f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
         model = self._create_model(
             self.config["use_checkpoint"],
@@ -226,7 +226,7 @@ class Trainer:
 
     def _valid(self, datamodule, fold):
         # load model
-        checkpoint_name = f"{config['modelname']}_{fold}"
+        checkpoint_name = f"{self.config['modelname']}_{fold}"
         filepath_checkpoint = f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt"
         model = self._create_model(filepath_checkpoint=filepath_checkpoint)
         model.eval()
