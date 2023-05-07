@@ -13,8 +13,8 @@ services:
              capabilities: ["gpu"]
     volumes:
       - /mnt/wslg:/mnt/wslg
-      - ./:/workspace:cached
-      - ./kaggle:/kaggle:cached
+      - /mnt/d/nakashimn/python/kaggle/BirdCLEF2023/:/workspace:cached
+      - /mnt/d/nakashimn/python/kaggle/BirdCLEF2023/kaggle:/kaggle:cached
       - /mnt/c/Users/nakas/Data/birdclef-2023:/data_on_ssd:cached
     environment:
       TZ: Asia/Tokyo

@@ -13,6 +13,7 @@ torchvision
 torchaudio
 pytorch-lightning==1.9.4
 transformers
+timm
 simpleaudio==1.0.4
 pydub
 librosa==0.10.0
