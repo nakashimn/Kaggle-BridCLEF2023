@@ -115,7 +115,6 @@ config["earlystopping"] = {
 }
 config["checkpoint"] = {
     "dirpath": config["path"]["temporal_dir"],
-    "monitor": "val_loss",
     "save_top_k": 1,
     "mode": "min",
     "save_last": False,

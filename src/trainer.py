@@ -152,6 +152,7 @@ class Trainer:
         # define check point
         loss_checkpoint = callbacks.ModelCheckpoint(
             filename=checkpoint_name,
+            monitor="val_loss",
             **self.config["checkpoint"]
         )
 
@@ -201,6 +202,7 @@ class Trainer:
         # define check point
         loss_checkpoint = callbacks.ModelCheckpoint(
             filename=checkpoint_name,
+            monitor="train_loss",
             **self.config["checkpoint"]
         )
 
