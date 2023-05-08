@@ -260,15 +260,19 @@ def create_mlflow_logger(config):
     )
     return mlflow_logger
 
-def update_model(config, filepath_config):
-    # copy Models and ConfigFile from temporal_dir to model_dir
+def update_config(config, filepath_config):
+    # copy ConfigFile from temporal_dir to model_dir
+    dirpath_model = pathlib.Path(config["path"]["model_dir"])
+    filename_config = pathlib.Path(filepath_config).name
+    shutil.copy2(filepath_config, str(dirpath_model / filename_config))
+
+def update_model(config):
+    # copy Models from temporal_dir to model_dir
     filepaths_ckpt = glob.glob(f"{config['path']['temporal_dir']}/*.ckpt")
     dirpath_model = pathlib.Path(config["path"]["model_dir"])
     for filepath_ckpt in filepaths_ckpt:
         filename = pathlib.Path(filepath_ckpt).name
         shutil.move(filepath_ckpt, str(dirpath_model / filename))
-    filename_config = pathlib.Path(filepath_config).name
-    shutil.copy2(filepath_config, str(dirpath_model / filename_config))
 
 def upload_model(config, message):
     try:
@@ -318,6 +322,9 @@ if __name__=="__main__":
         mlflow_logger.run_id,
         f"./config/{args.config}.py"
     )
+
+    # Update config
+    update_config(config, f"./config/{args.config}.py")
 
     # torch setting
     torch.set_float32_matmul_precision("medium")
@@ -374,7 +381,7 @@ if __name__=="__main__":
     })
     print(f"cmAP:{cmap:.03f}")
 
-    # # Update model
-    update_model(config, f"./config/{args.config}.py")
+    # Update model
+    update_model(config)
     if args.message is not None:
         upload_model(config, args.message)
