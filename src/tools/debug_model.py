@@ -6,8 +6,8 @@ from torch import nn
 import librosa
 from transformers import Wav2Vec2Config, Wav2Vec2FeatureExtractor, Wav2Vec2Model
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
-from config.trial_v3 import config
-from components.models import BirdClefModel
+from config.trial_v4 import config
+from components.models import BirdClefModel, BirdClefPretrainModel
 
 ###
 # sample
@@ -47,5 +47,14 @@ probs = logits.softmax(axis=1)
 preds = probs.argmax(axis=1)
 
 # model
-model = BirdClefModel(config["model"])
+model_ = BirdClefModel(config["model"])
 result = model(input_feat)
+
+# pretrained model
+from config.pretrain_v0 import config
+model = BirdClefPretrainModel.load_from_checkpoint(
+    f"{config['path']['model_dir']}/{config['modelname']}.ckpt",
+    config=config["model"]
+)
+model.model = model.model.wav2vec2
+model.save_pretrained_model()
