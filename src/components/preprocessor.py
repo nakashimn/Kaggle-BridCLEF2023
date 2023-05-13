@@ -70,7 +70,7 @@ class DataPreprocessor:
 
     def pred_dataset(self):
         filepaths = glob.glob(
-            f"{self.config['path']['preddata']}/**/*.ogg", recursive=True
+            f"{self.config['path']['preddata']}/**/*.npz", recursive=True
         )
         df = pd.DataFrame(filepaths, columns=["filepath"])
         return df
