@@ -49,18 +49,17 @@ config = {
         "yenspu1", "yertin1", "yesbar1", "yespet1", "yetgre1", "yewgre1",
         "none"
     ],
-    "group": "group",
     "experiment_name": "birdclef2023-trial-v4",
     "path": {
-        "traindata": "/kaggle/input/birdclef-2023-modified-5sec/train_audio/",
-        "trainmeta": "/kaggle/input/birdclef-2023-modified-5sec/train_metadata.csv",
-        "testdata": "/kaggle/input/birdclef-2023-modified-5sec/train_audio/",
+        "traindata": "/kaggle/input/birdclef-2023-oversampled-5sec/train_audio_v0/",
+        "trainmeta": "/kaggle/input/birdclef-2023-oversampled-5sec/train_metadata_v0.csv",
+        "testdata": "/kaggle/input/birdclef-2023-oversampled-5sec/train_audio_v0/",
         "preddata": "/data_on_ssd/birdclef-2023-modified/test_soundscapes/",
         "temporal_dir": "../tmp/artifacts/",
         "model_dir": "/kaggle/input/birdclef2023-trial-v4/"
     },
     "modelname": "best_loss",
-    "use_checkpoint": True,
+    "use_checkpoint": False,
     "sampling_rate": 32000,
     "chunk_sec": 5,
     "duration_sec": 5,
