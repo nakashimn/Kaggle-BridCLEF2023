@@ -4,6 +4,7 @@ import librosa
 import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms as Tv
 from pytorch_lightning import LightningDataModule
 from transformers import Wav2Vec2FeatureExtractor
 import traceback
@@ -169,15 +170,19 @@ class BirdClefMelspecDataset(Dataset):
         self.labels = None
         if self.config["label"] in df.keys():
             self.labels = self._read_labels(df[self.config["label"]])
+        self.pre_transform = Tv.Compose([
+            Tv.ToTensor(),
+            Tv.Normalize(config["mean"], config["std"])
+        ])
         self.transform = transform
 
     def __len__(self):
         return len(self.filepaths)
 
     def __getitem__(self, idx):
-        sound = self._read_sound(self.filepaths[idx])
-        melspec = self._to_melspec(sound)
-        melspec = self._mono_to_color(melspec)
+        melspec = self._read_melspec(self.filepaths[idx])
+        melspec = self._normalize(melspec)
+        melspec = self.pre_transform(melspec)
         if self.transform is not None:
             melspec = self.transform(melspec)
         if self.labels is not None:
@@ -189,31 +194,19 @@ class BirdClefMelspecDataset(Dataset):
         values = df["filepath"].values
         return values
 
-    def _read_sound(self, filepath):
-        sound = np.load(filepath)["arr_0"]
-        return sound
-
-    def _to_melspec(self, sound):
-        melspec = librosa.feature.melspectrogram(
-            y=sound, **self.config["melspec"]
-        )
+    def _read_melspec(self, filepath):
+        melspec = np.load(filepath)["arr_0"]
+        melspec = np.expand_dims(melspec, axis=-1)
         return melspec
 
-    def _mono_to_color(self, melspec, eps=1e-6):
-        melspec_color = np.stack([melspec, melspec, melspec], axis=-1)
-
-        # Standardize
-        mean = melspec.mean()
-        std = melspec.std()
-        melspec_color = (melspec_color - mean) / (std + eps)
-
-        melspec_max = melspec_color.max()
-        melspec_min = melspec_color.min()
-        if (melspec_max - melspec_min) <= eps:
-            melspec_color = np.zeros_like(melspec_color, dtype=np.uint8)
-        else:
-            melspec_color = (255 * (melspec_color - melspec_min) / (melspec_max - melspec_min)).astype(np.uint8)
-        return melspec_color
+    def _normalize(self, melspec, eps=1e-6):
+        melspec = (melspec - melspec.mean()) / (melspec.std() + eps)
+        if (melspec.max() - melspec.min()) < eps:
+            return np.zeros_like(melspec, dtype=np.uint8)
+        melspec = (
+            255 * ((melspec - melspec.min()) / (melspec.max() - melspec.min()))
+        ).astype(np.uint8)
+        return melspec
 
     def _read_labels(self, df):
         labels = torch.tensor(df.apply(self._to_onehot), dtype=torch.float32)
@@ -238,7 +231,6 @@ class BirdClefPredDataset(Dataset):
     def __getitem__(self, idx):
         chunk = self._read_chunk(self.filepaths[idx], self.end_sec[idx])
         melspec = self._to_melspec(chunk)
-        melspec = self._mono_to_color(melspec)
         if self.transform is not None:
             melspec = self.transform(melspec)
         return melspec
@@ -284,22 +276,6 @@ class BirdClefPredDataset(Dataset):
             y=sound, **self.config["melspec"]
         )
         return melspec
-
-    def _mono_to_color(self, melspec, eps=1e-6):
-        melspec_color = np.stack([melspec, melspec, melspec], axis=-1)
-
-        # Standardize
-        mean = melspec.mean()
-        std = melspec.std()
-        melspec_color = (melspec_color - mean) / (std + eps)
-
-        melspec_max = melspec_color.max()
-        melspec_min = melspec_color.min()
-        if (melspec_max - melspec_min) <= eps:
-            melspec_color = np.zeros_like(melspec_color, dtype=np.uint8)
-        else:
-            melspec_color = (255 * (melspec_color - melspec_min) / (melspec_max - melspec_min)).astype(np.uint8)
-        return melspec_color
 
 ################################################################################
 # DataModule

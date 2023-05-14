@@ -281,6 +281,16 @@ class BirdClefBgClassifierModel(LightningModule):
         )
         return [optimizer], [scheduler]
 
+def init_layer(layer):
+    nn.init.xavier_uniform_(layer.weight)
+
+    if hasattr(layer, "bias"):
+        if layer.bias is not None:
+            layer.bias.data.fill_(0.)
+
+def init_bn(bn):
+    bn.bias.data.fill_(0.)
+    bn.weight.data.fill_(1.0)
 
 class AttBlockV2(nn.Module):
     def __init__(
@@ -306,6 +316,11 @@ class AttBlockV2(nn.Module):
             stride=1,
             padding=0,
             bias=True)
+        self.init_weights()
+
+    def init_weights(self):
+        init_layer(self.att)
+        init_layer(self.cla)
 
     def forward(self, x):
         # x: (n_samples, n_in, n_time)
@@ -329,10 +344,16 @@ class BirdClefTimmSEDModel(LightningModule):
         self.bn0, self.encoder, self.linear, self.att_block = self._create_model()
         self.criterion = eval(config["loss"]["name"])(**self.config["loss"]["params"])
 
+        self.init_weights()
+
         # variables
         self.val_probs = np.nan
         self.val_labels = np.nan
         self.min_loss = np.nan
+
+    def init_weights(self):
+        init_bn(self.bn0)
+        init_layer(self.linear)
 
     def _create_model(self):
         # batch normalization
@@ -341,7 +362,7 @@ class BirdClefTimmSEDModel(LightningModule):
         base_model = timm.create_model(
             self.config["base_model_name"],
             pretrained=True,
-            num_class=0,
+            num_classes=0,
             global_pool="",
             in_chans=self.config["input_channels"]
         )
@@ -364,11 +385,10 @@ class BirdClefTimmSEDModel(LightningModule):
     def forward(self, input_data):
         x = input_data[:, [0], :, :]
 
-        x = x.transpose(1, 3)
+        # normalize over mel_freq
+        x = x.transpose(1, 2)
         x = self.bn0(x)
-        x = x.transpose(1, 3)
-
-        x = x.transpose(2, 3)
+        x = x.transpose(1, 2)
 
         x = self.encoder(x)
 

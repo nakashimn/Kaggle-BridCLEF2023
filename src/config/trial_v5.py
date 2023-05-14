@@ -1,7 +1,4 @@
 config = {
-    "n_splits": 3,
-    "train_fold": [0, 1, 2],
-    "valid_fold": [0, 1, 2],
     "random_seed": 57,
     "pred_device": "cpu",
     "label": "labels",
@@ -52,37 +49,59 @@ config = {
         "yenspu1", "yertin1", "yesbar1", "yespet1", "yetgre1", "yewgre1",
         "none"
     ],
-    "group": "group",
-    "experiment_name": "birdclef2023-trial-v4",
+    "experiment_name": "birdclef2023-trial-v5",
     "path": {
-        "traindata": "/data_on_ssd/birdclef-2023-modified/train_audio/",
-        "trainmeta": "/data_on_ssd/birdclef-2023-modified/train_metadata.csv",
-        "testdata": "/data_on_ssd/birdclef-2023-modified/train_audio/",
-        "preddata": "/data_on_ssd/birdclef-2023-modified/test_soundscapes/",
+        "traindata": "/kaggle/input/birdclef-2023-oversampled-5sec/train_melspec_v1/",
+        "trainmeta": "/kaggle/input/birdclef-2023-oversampled-5sec/train_metadata_v1.csv",
+        "testdata": "/kaggle/input/birdclef-2023-oversampled-5sec/train_melspec_v1/",
+        "preddata": "/kaggle/input/birdclef-2023/test_soundscapes/",
         "temporal_dir": "../tmp/artifacts/",
-        "model_dir": "/kaggle/input/birdclef2023-trial-v4/"
+        "model_dir": "/kaggle/input/birdclef2023-trial-v5/"
     },
     "modelname": "best_loss",
+    "use_checkpoint": True,
     "sampling_rate": 32000,
     "chunk_sec": 5,
-    "duration_sec": 30,
+    "duration_sec": 5,
+    "n_mels": 256,
     "pred_ensemble": False,
     "train_with_alldata": True
 }
 config["augmentation"] = {
-    "sampling_rate": config["sampling_rate"],
-    "ratio_harmonic": 0.10,
-    "ratio_pitch_shift": 0.10,
-    "ratio_percussive": 0.10,
-    "ratio_time_stretch": 0.0,
-    "range_harmonic_margin": [1, 3],
-    "range_n_step_pitch_shift": [-0.5, 0.5],
-    "range_percussive_margin": [1, 3],
-    "range_rate_time_stretch": [0.9, 1.1]
+    "time_stretch": {
+        "probability": 0.1,
+        "n_mels": 256
+    },
+    "pitch_shift": {
+        "probability": 0.1,
+        "max": 0.1
+    },
+    "time_shift": {
+        "probability": 0.1,
+        "max": 0.2
+    },
+    "freq_mask": {
+        "probability": 0.1,
+        "max": 25
+    },
+    "time_mask": {
+        "probability": 0.1,
+        "max": 50
+    },
+    "fadein": {
+        "probability": 0.1,
+        "max": 0.5
+    },
+    "fadeout": {
+        "probability": 0.1,
+        "max": 0.5
+    }
 }
 config["model"] = {
-    "base_model_name": "efficientnet_b0",
+    "base_model_name": "tf_efficientnet_b0_ns",
+    "input_channels": 1,
     "num_class": 265,
+    "n_mels": config["n_mels"],
     "gradient_checkpointing": True,
     "loss": {
         "name": "nn.CrossEntropyLoss",
@@ -105,11 +124,10 @@ config["model"] = {
     }
 }
 config["earlystopping"] = {
-    "patience": 1
+    "patience": 2
 }
 config["checkpoint"] = {
     "dirpath": config["path"]["temporal_dir"],
-    "monitor": "val_loss",
     "save_top_k": 1,
     "mode": "min",
     "save_last": False,
@@ -119,21 +137,11 @@ config["trainer"] = {
     "accelerator": "gpu",
     "devices": 1,
     "max_epochs": 100,
-    "accumulate_grad_batches": 16,
+    "accumulate_grad_batches": 2,
     "fast_dev_run": False,
     "deterministic": False,
     "num_sanity_val_steps": 0,
     "precision": 32
-}
-config["kfold"] = {
-    "name": "KFold",
-    "params": {
-        "n_splits": config["n_splits"],
-        "shuffle": True,
-        "random_state": config["random_seed"]
-    },
-    "anchor": {
-    }
 }
 config["datamodule"] = {
     "dataset":{
@@ -141,9 +149,11 @@ config["datamodule"] = {
         "num_class": config["model"]["num_class"],
         "label": config["label"],
         "labels": config["labels"],
+        "mean": 0.485,
+        "std": 0.229,
         "melspec": {
             "sr": config["sampling_rate"],
-            "n_mels": 256,
+            "n_mels": config["n_mels"],
             "n_fft": 2048,
             "hop_length": 512,
             "fmin": 16,
@@ -154,21 +164,21 @@ config["datamodule"] = {
         "duration_sec": config["duration_sec"]
     },
     "train_loader": {
-        "batch_size": 4,
+        "batch_size": 32,
         "shuffle": True,
         "num_workers": 8,
         "pin_memory": True,
         "drop_last": True,
     },
     "val_loader": {
-        "batch_size": 4,
+        "batch_size": 32,
         "shuffle": False,
         "num_workers": 8,
         "pin_memory": True,
         "drop_last": False
     },
     "pred_loader": {
-        "batch_size": 4,
+        "batch_size": 32,
         "shuffle": False,
         "num_workers": 8,
         "pin_memory": False,
@@ -179,7 +189,7 @@ config["Metrics"] = {
     "confmat": {
         "label": config["labels"]
     },
-    "cmap": {
+    "cmAP": {
         "padding_num": 5
     }
 }

@@ -20,9 +20,9 @@ import sklearn.model_selection
 import traceback
 
 from components.preprocessor import DataPreprocessor
-from components.datamodule import BirdClefDataset, DataModule
-from components.augmentation import SoundAugmentation
-from components.models import BirdClefModel
+from components.datamodule import BirdClefDataset, BirdClefMelspecDataset, DataModule
+from components.augmentation import SoundAugmentation, SpecAugmentation
+from components.models import BirdClefModel, BirdClefTimmSEDModel
 from components.validations import MinLoss, ValidResult, ConfusionMatrix, CMeanAveragePrecision
 
 class Trainer:
@@ -48,7 +48,13 @@ class Trainer:
 
     def run(self):
 
-        idx_train, idx_val = self._split_dataset(self.df_train)
+        # idx_train, idx_val = self._split_dataset(self.df_train)
+        kfold = sklearn.model_selection.KFold(
+            n_splits=5, shuffle=True, random_state=config["random_seed"]
+        )
+        for idx_train, idx_val in kfold.split(self.df_train):
+            break
+
         # create datamodule
         datamodule = self._create_datamodule(idx_train, idx_val)
 
@@ -336,22 +342,26 @@ if __name__=="__main__":
     df_train = data_preprocessor.train_dataset_primary()
 
     # Augmentation
-    sound_augmentation = None
+    # sound_augmentation = None
+    spec_augmentation = None
     if config["augmentation"] is not None:
-        sound_augmentation = SoundAugmentation(
-            **config["augmentation"]
+        # sound_augmentation = SoundAugmentation(
+        #     **config["augmentation"]
+        # )
+        spec_augmentation = SpecAugmentation(
+            config["augmentation"]
         )
     transforms = {
-        "train": sound_augmentation,
+        "train": spec_augmentation,
         "valid": None,
         "pred": None
     }
 
     # Training
     trainer = Trainer(
-        BirdClefModel,
+        BirdClefTimmSEDModel,
         DataModule,
-        BirdClefDataset,
+        BirdClefMelspecDataset,
         df_train,
         config,
         transforms,
