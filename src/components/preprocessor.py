@@ -6,13 +6,11 @@ from tqdm import tqdm
 import librosa
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MultiLabelBinarizer
 import traceback
 
 class DataPreprocessor:
     def __init__(self, config):
         self.config = config
-        self.mlb = MultiLabelBinarizer()
 
     def train_dataset(self):
         df_meta = pd.read_csv(self.config["path"]["trainmeta"])
