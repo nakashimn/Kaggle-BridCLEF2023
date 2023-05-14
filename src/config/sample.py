@@ -1,7 +1,4 @@
 config = {
-    "n_splits": 2,
-    "train_fold": [0, 1],
-    "valid_fold": [0, 1],
     "random_seed": 57,
     "pred_device": "cpu",
     "label": "labels",
@@ -52,31 +49,32 @@ config = {
         "yenspu1", "yertin1", "yesbar1", "yespet1", "yetgre1", "yewgre1",
         "none"
     ],
-    "group": "group",
     "experiment_name": "sample-v0",
     "path": {
-        "traindata": "/kaggle/input/birdclef-2023/train_audio/",
-        "trainmeta": "/kaggle/input/birdclef-2023/train_metadata.csv",
-        "testdata": "/kaggle/input/birdclef-2023/train_audio/",
+        "traindata": "/kaggle/input/sample_dataset/train_melspec_v1/",
+        "trainmeta": "/kaggle/input/sample_dataset/train_metadata_v1.csv",
+        "testdata": "/kaggle/input/sample_dataset/train_melspec_v1/",
         "preddata": "/kaggle/input/birdclef-2023/test_soundscapes/",
         "temporal_dir": "../tmp/artifacts/",
-        "model_dir": "/workspace/data/model/sample/"
+        "model_dir": "/workspace/model/sample/"
     },
     "modelname": "best_loss",
+    "use_checkpoint": False,
     "sampling_rate": 32000,
     "chunk_sec": 5,
     "duration_sec": 5,
+    "n_mels": 256,
     "pred_ensemble": False,
     "train_with_alldata": True
 }
 config["model"] = {
-    "base_model_name": "/kaggle/input/whisper-base/",
-    "dim_feature": 512,
+    "base_model_name": "tf_efficientnet_b0_ns",
+    "input_channels": 1,
     "num_class": 265,
-    "dropout_rate": 0.5,
-    "freeze_base_model": False,
+    "n_mels": config["n_mels"],
+    "gradient_checkpointing": True,
     "loss": {
-        "name": "nn.BCEWithLogitsLoss",
+        "name": "nn.CrossEntropyLoss",
         "params": {
             "weight": None
         }
@@ -84,7 +82,7 @@ config["model"] = {
     "optimizer":{
         "name": "optim.RAdam",
         "params":{
-            "lr": 1e-5
+            "lr": 1e-3
         },
     },
     "scheduler":{
@@ -96,7 +94,7 @@ config["model"] = {
     }
 }
 config["earlystopping"] = {
-    "patience": 1
+    "patience": 2
 }
 config["checkpoint"] = {
     "dirpath": config["path"]["temporal_dir"],
@@ -110,22 +108,11 @@ config["trainer"] = {
     "accelerator": "gpu",
     "devices": 1,
     "max_epochs": 100,
-    "accumulate_grad_batches": 1,
+    "accumulate_grad_batches": 2,
     "fast_dev_run": False,
-    "deterministic": True,
+    "deterministic": False,
     "num_sanity_val_steps": 0,
-    "resume_from_checkpoint": None,
     "precision": 32
-}
-config["kfold"] = {
-    "name": "KFold",
-    "params": {
-        "n_splits": config["n_splits"],
-        "shuffle": True,
-        "random_state": config["random_seed"]
-    },
-    "anchor": {
-    }
 }
 config["datamodule"] = {
     "dataset":{
@@ -133,37 +120,47 @@ config["datamodule"] = {
         "num_class": config["model"]["num_class"],
         "label": config["label"],
         "labels": config["labels"],
-        "sampling_rate": {
-            "org": config["sampling_rate"],
-            "target": 16000
+        "mean": 0.485,
+        "std": 0.229,
+        "melspec": {
+            "sr": config["sampling_rate"],
+            "n_mels": config["n_mels"],
+            "n_fft": 2048,
+            "hop_length": 512,
+            "fmin": 16,
+            "fmax": 16386
         },
         "path": config["path"],
         "chunk_sec": config["chunk_sec"],
-        "duration_sec": config["duration_sec"],
-        "use_fast_tokenizer": True,
-        "max_length": 512
+        "duration_sec": config["duration_sec"]
     },
     "train_loader": {
-        "batch_size": 4,
+        "batch_size": 32,
         "shuffle": True,
-        "num_workers": 16,
+        "num_workers": 8,
         "pin_memory": True,
         "drop_last": True,
     },
     "val_loader": {
-        "batch_size": 16,
+        "batch_size": 32,
         "shuffle": False,
-        "num_workers": 16,
+        "num_workers": 8,
         "pin_memory": True,
         "drop_last": False
     },
     "pred_loader": {
-        "batch_size": 16,
+        "batch_size": 32,
         "shuffle": False,
-        "num_workers": 16,
+        "num_workers": 8,
         "pin_memory": False,
         "drop_last": False
     }
 }
 config["Metrics"] = {
+    "confmat": {
+        "label": config["labels"]
+    },
+    "cmap": {
+        "padding_num": 5
+    }
 }
