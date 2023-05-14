@@ -1,5 +1,8 @@
 import numpy as np
 import librosa
+import torch
+from torchvision import transforms as Tv
+from torchaudio import transforms as Ta
 import traceback
 
 class SoundAugmentation:
@@ -82,3 +85,101 @@ class SoundAugmentation:
 
     def _is_applied(self, ratio):
         return np.random.choice([True,False], p=[ratio, 1-ratio])
+
+
+class Fadein:
+    def __init__(self, ratio=0.5):
+        self.ratio = ratio
+
+    def __call__(self, x):
+        fade_length = 1.0 / (x.shape[2] * self.ratio)
+        weights = torch.clip(
+            fade_length * torch.arange(x.shape[2]),
+            0.0, 1.0
+        ).to(torch.float32)
+        return x * weights
+
+class Fadeout:
+    def __init__(self, ratio=0.5):
+        self.ratio = ratio
+
+    def __call__(self, x):
+        fade_length = 1.0 / (x.shape[2] * self.ratio)
+        weights = torch.flip(
+            torch.clip(
+                fade_length * torch.arange(x.shape[2]),
+                0.0, 1.0
+            ),
+            dims=[0]
+        ).to(torch.float32)
+        return x * weights
+
+class SpecAugmentation:
+    def __init__(self, config):
+        self.config = config
+        self.transform = self.create_transform()
+        pass
+
+    def create_transform(self):
+        augmentations = []
+
+        ### TimeStretch
+        # if self.config["time_stretch"] is not None:
+        #     timestretch = Tv.RandomApply([
+        #         Ta.TimeStretch(
+        #             n_freq=self.config["time_stretch"]["n_mels"]
+        #         )],
+        #         p=self.config["time_stretch"]["probability"]
+        #     )
+        #     augmentations.append(timestretch)
+        if self.config["pitch_shift"] is not None:
+            pitchshift = Tv.RandomApply([
+                Tv.RandomAffine(
+                    degrees=0,
+                    translate=(0, self.config["pitch_shift"]["max"])
+                )],
+                p=self.config["pitch_shift"]["probability"]
+            )
+            augmentations.append(pitchshift)
+        if self.config["time_shift"] is not None:
+            timeshift = Tv.RandomApply([
+                Tv.RandomAffine(
+                    degrees=0,
+                    translate=(self.config["time_shift"]["max"], 0)
+                )],
+                p=self.config["time_shift"]["probability"]
+            )
+            augmentations.append(timeshift)
+        if self.config["freq_mask"] is not None:
+            freqmask = Tv.RandomApply(
+                [Ta.FrequencyMasking(self.config["freq_mask"]["max"])],
+                p=self.config["freq_mask"]["probability"]
+            )
+            augmentations.append(freqmask)
+        if self.config["time_mask"] is not None:
+            timemask = Tv.RandomApply(
+                [Ta.TimeMasking(self.config["time_mask"]["max"])],
+                p=self.config["time_mask"]["probability"]
+            )
+            augmentations.append(timemask)
+        if self.config["fadein"] is not None:
+            fadein = Tv.RandomApply(
+                [Fadein(self.config["fadein"]["max"])],
+                p=self.config["fadein"]["probability"]
+            )
+            augmentations.append(fadein)
+        if self.config["fadein"] is not None:
+            fadeout = Tv.RandomApply(
+                [Fadeout(self.config["fadeout"]["max"])],
+                p=self.config["fadeout"]["probability"]
+            )
+            augmentations.append(fadeout)
+        if len(augmentations)==0:
+            return None
+        return Tv.Compose(augmentations)
+
+    def __call__(self, melspec):
+        return self.run(melspec)
+
+    def run(self, melspec):
+        return self.transform(melspec)
