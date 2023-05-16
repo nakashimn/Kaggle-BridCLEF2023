@@ -8,8 +8,10 @@ from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 from pytorch_lightning import LightningModule
 import timm
-from transformers import Wav2Vec2Model, Wav2Vec2ForPreTraining, Wav2Vec2Config
+from transformers import Wav2Vec2Model, Wav2Vec2ForPreTraining, Wav2Vec2Config, PretrainedConfig, PreTrainedModel
 from transformers.models.wav2vec2.modeling_wav2vec2 import _compute_mask_indices, _sample_negative_indices
+from lightly.models.modules import SimCLRProjectionHead, SimSiamProjectionHead, SimSiamPredictionHead
+from lightly.loss import NTXentLoss, NegativeCosineSimilarity
 import traceback
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[0]))
@@ -335,54 +337,33 @@ class AttBlockV2(nn.Module):
         elif self.activation == 'sigmoid':
             return torch.sigmoid(x)
 
-class BirdClefTimmSEDModel(LightningModule):
+class TimmSEDBaseConfig(PretrainedConfig):
+    effnet_pretrained = False
+
+class TimmSEDBaseModel(PreTrainedModel):
     def __init__(self, config):
-        super().__init__()
-
-        # const
-        self.config = config
-        self.bn0, self.encoder, self.linear, self.att_block = self._create_model()
-        self.criterion = eval(config["loss"]["name"])(**self.config["loss"]["params"])
-
-        self.init_weights()
-
-        # variables
-        self.val_probs = np.nan
-        self.val_labels = np.nan
-        self.min_loss = np.nan
-
-    def init_weights(self):
-        init_bn(self.bn0)
-        init_layer(self.linear)
+        super().__init__(config)
+        self.effnet_pretrained = config.effnet_pretrained
+        self.bn0, self.encoder = self._create_model()
+        self.num_features = self.encoder[-1].num_features
 
     def _create_model(self):
         # batch normalization
-        bn0 = nn.BatchNorm2d(self.config["n_mels"])
+        bn0 = nn.BatchNorm2d(256)
         # encoder
         base_model = timm.create_model(
-            self.config["base_model_name"],
-            pretrained=True,
+            "tf_efficientnet_b6_ns",
+            pretrained=self.effnet_pretrained,
             num_classes=0,
             global_pool="",
-            in_chans=self.config["input_channels"]
+            in_chans=1
         )
         layers = list(base_model.children())[:-2]
         encoder = nn.Sequential(*layers)
-        # linear
-        linear = nn.Linear(
-            base_model.num_features,
-            base_model.num_features,
-            bias=True
-        )
-        # attention block
-        att_block = AttBlockV2(
-            base_model.num_features,
-            self.config["num_class"],
-            activation="sigmoid"
-        )
-        return bn0, encoder, linear, att_block
+        return bn0, encoder
 
     def forward(self, input_data):
+
         x = input_data[:, [0], :, :]
 
         # normalize over mel_freq
@@ -396,6 +377,46 @@ class BirdClefTimmSEDModel(LightningModule):
 
         x = F.max_pool1d(x, kernel_size=3, stride=1, padding=1) \
           + F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
+
+        return x
+
+class BirdClefTimmSEDModel(LightningModule):
+    def __init__(self, config):
+        super().__init__()
+
+        # const
+        self.config = config
+        self.base_model, self.linear, self.att_block = self._create_model()
+        self.criterion = eval(config["loss"]["name"])(**self.config["loss"]["params"])
+
+        # variables
+        self.val_probs = np.nan
+        self.val_labels = np.nan
+        self.min_loss = np.nan
+
+    def _create_model(self):
+        # basemodel
+        dummy_config = PretrainedConfig()
+        base_model = TimmSEDBaseModel.from_pretrained(
+            self.config["base_model_name"],
+            config=dummy_config
+        )
+        # linear
+        linear = nn.Linear(
+            base_model.num_features,
+            base_model.num_features,
+            bias=True
+        )
+        # attention block
+        att_block = AttBlockV2(
+            base_model.num_features,
+            self.config["num_class"],
+            activation="sigmoid"
+        )
+        return base_model, linear, att_block
+
+    def forward(self, input_data):
+        x = self.base_model(input_data)
 
         x = x.transpose(1, 2)
         x = F.relu(self.linear(x))
@@ -456,3 +477,227 @@ class BirdClefTimmSEDModel(LightningModule):
             optimizer, **self.config["scheduler"]["params"]
         )
         return [optimizer], [scheduler]
+
+class BirdClefTimmSEDSimCLRModel(LightningModule):
+    def __init__(self, config):
+        super().__init__()
+
+        # const
+        self.config = config
+        self.base_model, self.projection = self._create_model()
+        self.criterion = NTXentLoss()
+
+        # variables
+        self.val_probs = np.nan
+        self.val_labels = np.nan
+        self.min_loss = np.nan
+
+    def _create_model(self):
+        # encoder
+        base_model = TimmSEDBaseModel()
+
+        projection = SimCLRProjectionHead(base_model.num_features*10, 2048, 2048)
+        # # linear
+        # linear = nn.Linear(
+        #     base_model.num_features,
+        #     base_model.num_features,
+        #     bias=True
+        # )
+        # # attention block
+        # att_block = AttBlockV2(
+        #     base_model.num_features,
+        #     self.config["num_class"],
+        #     activation="sigmoid"
+        # )
+        return base_model, projection
+
+    def forward(self, input_data):
+        x = self.base_model(input_data)
+        features = self.projection(x.flatten(start_dim=1))
+        return features
+
+    def training_step(self, batch, batch_idx):
+        features_0, features_1 = batch
+        logits_0 = self.forward(features_0)
+        logits_1 = self.forward(features_1)
+        loss = self.criterion(logits_0, logits_1)
+        return {"loss": loss}
+
+    def training_epoch_end(self, outputs):
+        metrics = torch.tensor([out["loss"] for out in outputs]).mean()
+        self.log(f"train_loss", metrics)
+
+        return super().training_epoch_end(outputs)
+
+    def configure_optimizers(self):
+        optimizer = eval(self.config["optimizer"]["name"])(
+            self.parameters(), **self.config["optimizer"]["params"]
+        )
+        scheduler = eval(self.config["scheduler"]["name"])(
+            optimizer, **self.config["scheduler"]["params"]
+        )
+        return [optimizer], [scheduler]
+
+    def save_pretrained_model(self):
+        self.base_model.save_pretrained(save_directory=self.config["save_directory"])
+
+
+class BirdClefTimmSEDSimCLRModel(LightningModule):
+    def __init__(self, config):
+        super().__init__()
+
+        # const
+        self.config = config
+        self.base_model, self.projection = self._create_model()
+        self.criterion = NTXentLoss()
+
+        # variables
+        self.val_probs = np.nan
+        self.val_labels = np.nan
+        self.min_loss = np.nan
+
+    def _create_model(self):
+        # encoder
+        dummy_config = TimmSEDBaseConfig()
+        base_model = TimmSEDBaseModel(dummy_config)
+
+        projection = SimCLRProjectionHead(base_model.num_features*10, 2048, 2048)
+        return base_model, projection
+
+    def forward(self, input_data):
+        x = self.base_model(input_data)
+        features = self.projection(x.flatten(start_dim=1))
+        return features
+
+    def training_step(self, batch, batch_idx):
+        features_0, features_1 = batch
+        logits_0 = self.forward(features_0)
+        logits_1 = self.forward(features_1)
+        loss = self.criterion(logits_0, logits_1)
+        return {"loss": loss}
+
+    def training_epoch_end(self, outputs):
+        metrics = torch.tensor([out["loss"] for out in outputs]).mean()
+        self.log(f"train_loss", metrics)
+
+        return super().training_epoch_end(outputs)
+
+    def configure_optimizers(self):
+        optimizer = eval(self.config["optimizer"]["name"])(
+            self.parameters(), **self.config["optimizer"]["params"]
+        )
+        scheduler = eval(self.config["scheduler"]["name"])(
+            optimizer, **self.config["scheduler"]["params"]
+        )
+        return [optimizer], [scheduler]
+
+    def save_pretrained_model(self):
+        self.base_model.save_pretrained(save_directory=self.config["save_directory"])
+
+
+class BirdClefTimmSEDSimCLRModel(LightningModule):
+    def __init__(self, config):
+        super().__init__()
+
+        # const
+        self.config = config
+        self.base_model, self.projection = self._create_model()
+        self.criterion = NTXentLoss()
+
+        # variables
+        self.val_probs = np.nan
+        self.val_labels = np.nan
+        self.min_loss = np.nan
+
+    def _create_model(self):
+        # encoder
+        dummy_config = TimmSEDBaseConfig()
+        base_model = TimmSEDBaseModel(dummy_config)
+
+        projection = SimCLRProjectionHead(base_model.num_features*10, 2048, 2048)
+        return base_model, projection
+
+    def forward(self, input_data):
+        x = self.base_model(input_data)
+        features = self.projection(x.flatten(start_dim=1))
+        return features
+
+    def training_step(self, batch, batch_idx):
+        features_0, features_1 = batch
+        logits_0 = self.forward(features_0)
+        logits_1 = self.forward(features_1)
+        loss = self.criterion(logits_0, logits_1)
+        return {"loss": loss}
+
+    def training_epoch_end(self, outputs):
+        metrics = torch.tensor([out["loss"] for out in outputs]).mean()
+        self.log(f"train_loss", metrics)
+
+        return super().training_epoch_end(outputs)
+
+    def configure_optimizers(self):
+        optimizer = eval(self.config["optimizer"]["name"])(
+            self.parameters(), **self.config["optimizer"]["params"]
+        )
+        scheduler = eval(self.config["scheduler"]["name"])(
+            optimizer, **self.config["scheduler"]["params"]
+        )
+        return [optimizer], [scheduler]
+
+    def save_pretrained_model(self):
+        self.base_model.save_pretrained(save_directory=self.config["save_directory"])
+
+class BirdClefTimmSEDSimSiamModel(LightningModule):
+    def __init__(self, config):
+        super().__init__()
+
+        # const
+        self.config = config
+        self.base_model, self.projection, self.prediction = self._create_model()
+        self.criterion = NegativeCosineSimilarity()
+
+        # variables
+        self.val_probs = np.nan
+        self.val_labels = np.nan
+        self.min_loss = np.nan
+
+    def _create_model(self):
+        # encoder
+        dummy_config = TimmSEDBaseConfig()
+        base_model = TimmSEDBaseModel(dummy_config)
+
+        projection = SimSiamProjectionHead(base_model.num_features*10, 2048, 2048)
+        prediction = SimSiamPredictionHead(2048 ,2048, 2048)
+        return base_model, projection, prediction
+
+    def forward(self, input_data):
+        x = self.base_model(input_data)
+        z = self.projection(x.flatten(start_dim=1))
+        p = self.prediction(z)
+        z = z.detach()
+        return z, p
+
+    def training_step(self, batch, batch_idx):
+        melspec_0, melspec_1 = batch
+        z_0, p_0 = self.forward(melspec_0)
+        z_1, p_1 = self.forward(melspec_1)
+        loss = 0.5 * (self.criterion(z_0, p_1) + self.criterion(z_1, p_0))
+        return {"loss": loss}
+
+    def training_epoch_end(self, outputs):
+        metrics = torch.tensor([out["loss"] for out in outputs]).mean()
+        self.log(f"train_loss", metrics)
+
+        return super().training_epoch_end(outputs)
+
+    def configure_optimizers(self):
+        optimizer = eval(self.config["optimizer"]["name"])(
+            self.parameters(), **self.config["optimizer"]["params"]
+        )
+        scheduler = eval(self.config["scheduler"]["name"])(
+            optimizer, **self.config["scheduler"]["params"]
+        )
+        return [optimizer], [scheduler]
+
+    def save_pretrained_model(self):
+        self.base_model.save_pretrained(save_directory=self.config["save_directory"])

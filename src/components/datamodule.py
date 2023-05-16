@@ -5,6 +5,7 @@ import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms as Tv
+import albumentations as A
 from pytorch_lightning import LightningDataModule
 from transformers import Wav2Vec2FeatureExtractor
 import traceback
@@ -320,3 +321,82 @@ class DataModule(LightningDataModule):
 
 ################################################################################
 ################################################################################
+
+class BirdClefMelspecSimCLRDataset(Dataset):
+    def __init__(self, df, config, transform=None):
+        self.config = config
+        self.filepaths = self._read_filepaths(df)
+        self.pre_transform = A.Compose(
+            [A.Normalize(config["mean"], config["std"])]
+        )
+        self.to_tensor = Tv.ToTensor()
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.filepaths)
+
+    def __getitem__(self, idx):
+        melspec = self._read_melspec(self.filepaths[idx])
+        melspec = self._normalize(melspec)
+        melspec = self.pre_transform(image=melspec)["image"]
+        melspec = self.to_tensor(melspec)
+        melspec_aug = self.transform(melspec)
+        return melspec, melspec_aug
+
+    def _read_filepaths(self, df):
+        values = df["filepath"].values
+        return values
+
+    def _read_melspec(self, filepath):
+        melspec = np.load(filepath)["arr_0"]
+        melspec = np.expand_dims(melspec, axis=-1)
+        return melspec
+
+    def _normalize(self, melspec, eps=1e-6):
+        melspec = (melspec - melspec.mean()) / (melspec.std() + eps)
+        if (melspec.max() - melspec.min()) < eps:
+            return np.zeros_like(melspec, dtype=np.uint8)
+        melspec = (
+            255 * ((melspec - melspec.min()) / (melspec.max() - melspec.min()))
+        ).astype(np.uint8)
+        return melspec
+
+class BirdClefMelspecSimSiamDataset(Dataset):
+    def __init__(self, df, config, transform=None):
+        self.config = config
+        self.filepaths = self._read_filepaths(df)
+        self.pre_transform = A.Compose(
+            [A.Normalize(config["mean"], config["std"])]
+        )
+        self.to_tensor = Tv.ToTensor()
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.filepaths)
+
+    def __getitem__(self, idx):
+        melspec = self._read_melspec(self.filepaths[idx])
+        melspec = self._normalize(melspec)
+        melspec = self.pre_transform(image=melspec)["image"]
+        melspec = self.to_tensor(melspec)
+        melspec_0 = self.transform(melspec)
+        melspec_1 = self.transform(melspec)
+        return melspec_0, melspec_1
+
+    def _read_filepaths(self, df):
+        values = df["filepath"].values
+        return values
+
+    def _read_melspec(self, filepath):
+        melspec = np.load(filepath)["arr_0"]
+        melspec = np.expand_dims(melspec, axis=-1)
+        return melspec
+
+    def _normalize(self, melspec, eps=1e-6):
+        melspec = (melspec - melspec.mean()) / (melspec.std() + eps)
+        if (melspec.max() - melspec.min()) < eps:
+            return np.zeros_like(melspec, dtype=np.uint8)
+        melspec = (
+            255 * ((melspec - melspec.min()) / (melspec.max() - melspec.min()))
+        ).astype(np.uint8)
+        return melspec
