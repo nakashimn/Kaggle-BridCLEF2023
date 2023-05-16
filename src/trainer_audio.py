@@ -20,9 +20,9 @@ import sklearn.model_selection
 import traceback
 
 from components.preprocessor import DataPreprocessor
-from components.datamodule import BirdClefDataset, BirdClefMelspecDataset, DataModule
-from components.augmentation import SoundAugmentation, SpecAugmentation
-from components.models import BirdClefModel, BirdClefTimmSEDModel
+from components.datamodule import BirdClefDataset, DataModule
+from components.augmentation import SoundAugmentation
+from components.models import BirdClefModel
 from components.validations import MinLoss, ValidResult, ConfusionMatrix, CMeanAveragePrecision
 
 class Trainer:
@@ -338,30 +338,25 @@ if __name__=="__main__":
     # Preprocess
     data_preprocessor = DataPreprocessor(config)
     fix_seed(config["random_seed"])
-    # df_train = data_preprocessor.train_dataset()
     df_train = data_preprocessor.train_dataset_primary()
 
     # Augmentation
-    # sound_augmentation = None
-    spec_augmentation = None
+    sound_augmentation = None
     if config["augmentation"] is not None:
-        # sound_augmentation = SoundAugmentation(
-        #     **config["augmentation"]
-        # )
-        spec_augmentation = SpecAugmentation(
-            config["augmentation"]
+        sound_augmentation = SoundAugmentation(
+            **config["augmentation"]
         )
     transforms = {
-        "train": spec_augmentation,
+        "train": sound_augmentation,
         "valid": None,
         "pred": None
     }
 
     # Training
     trainer = Trainer(
-        BirdClefTimmSEDModel,
+        BirdClefModel,
         DataModule,
-        BirdClefMelspecDataset,
+        BirdClefDataset,
         df_train,
         config,
         transforms,
