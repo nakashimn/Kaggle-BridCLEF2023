@@ -4,10 +4,10 @@ import pathlib
 import torch
 from torch import nn
 import librosa
-from transformers import Wav2Vec2Config, Wav2Vec2FeatureExtractor, Wav2Vec2Model
+from transformers import Wav2Vec2Config, Wav2Vec2FeatureExtractor, Wav2Vec2Model, PretrainedConfig
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 from config.trial_v4 import config
-from components.models import BirdClefModel, BirdClefPretrainModel
+from components.models import BirdClefModel, BirdClefPretrainModel, TimmSEDBaseModel, BirdClefTimmSEDPretrainModel
 
 ###
 # sample
@@ -50,7 +50,7 @@ preds = probs.argmax(axis=1)
 model_ = BirdClefModel(config["model"])
 result = model(input_feat)
 
-# pretrained model
+# pretrained model_v0
 from config.pretrain_v0 import config
 model = BirdClefPretrainModel.load_from_checkpoint(
     f"{config['path']['model_dir']}/{config['modelname']}.ckpt",
@@ -58,3 +58,13 @@ model = BirdClefPretrainModel.load_from_checkpoint(
 )
 model.model = model.model.wav2vec2
 model.save_pretrained_model()
+
+from config.pretrain_v1 import config
+model =BirdClefTimmSEDPretrainModel.load_from_checkpoint(
+    f"{config['path']['model_dir']}/{config['modelname']}-v4.ckpt",
+    config=config["model"]
+)
+model.save_pretrained_model()
+
+dummy_config = PretrainedConfig()
+TimmSEDBaseModel.from_pretrained("/workspace/data/model/birdclef2023_pretrained_v1/", config=dummy_config)
