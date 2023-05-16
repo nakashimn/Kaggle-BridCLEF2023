@@ -59,7 +59,7 @@ config = {
         "model_dir": "/kaggle/input/birdclef2023-trial-v5/"
     },
     "modelname": "best_loss",
-    "use_checkpoint": True,
+    "use_checkpoint": False,
     "sampling_rate": 32000,
     "chunk_sec": 5,
     "duration_sec": 5,
@@ -98,7 +98,7 @@ config["augmentation"] = {
     }
 }
 config["model"] = {
-    "base_model_name": "tf_efficientnet_b0_ns",
+    "base_model_name": "/workspace/data/model/birdclef2023_pretrained_v1/",
     "input_channels": 1,
     "num_class": 265,
     "n_mels": config["n_mels"],
@@ -137,7 +137,7 @@ config["trainer"] = {
     "accelerator": "gpu",
     "devices": 1,
     "max_epochs": 100,
-    "accumulate_grad_batches": 2,
+    "accumulate_grad_batches": 8,
     "fast_dev_run": False,
     "deterministic": False,
     "num_sanity_val_steps": 0,
@@ -149,6 +149,7 @@ config["datamodule"] = {
         "num_class": config["model"]["num_class"],
         "label": config["label"],
         "labels": config["labels"],
+        "smooth_eps": 0.01,
         "mean": 0.485,
         "std": 0.229,
         "melspec": {
@@ -164,21 +165,21 @@ config["datamodule"] = {
         "duration_sec": config["duration_sec"]
     },
     "train_loader": {
-        "batch_size": 32,
+        "batch_size": 8,
         "shuffle": True,
         "num_workers": 8,
         "pin_memory": True,
         "drop_last": True,
     },
     "val_loader": {
-        "batch_size": 32,
+        "batch_size": 8,
         "shuffle": False,
         "num_workers": 8,
         "pin_memory": True,
         "drop_last": False
     },
     "pred_loader": {
-        "batch_size": 32,
+        "batch_size": 8,
         "shuffle": False,
         "num_workers": 8,
         "pin_memory": False,
