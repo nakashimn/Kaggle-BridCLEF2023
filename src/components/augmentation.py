@@ -92,9 +92,11 @@ class Fadein:
         self.ratio = ratio
 
     def __call__(self, x):
-        fade_length = 1.0 / (x.shape[2] * self.ratio)
+        fade_gain = np.random.uniform(
+            1.0 / (x.shape[2] * self.ratio), 1.0
+        )
         weights = torch.clip(
-            fade_length * torch.arange(x.shape[2]),
+            fade_gain * torch.arange(1, x.shape[2] + 1),
             0.0, 1.0
         ).to(torch.float32)
         return x * weights
@@ -104,25 +106,64 @@ class Fadeout:
         self.ratio = ratio
 
     def __call__(self, x):
-        fade_length = 1.0 / (x.shape[2] * self.ratio)
+        fade_gain = np.random.uniform(
+            1.0 / (x.shape[2] * self.ratio), 1.0
+        )
         weights = torch.flip(
             torch.clip(
-                fade_length * torch.arange(x.shape[2]),
+                fade_gain * torch.arange(1, x.shape[2] + 1),
                 0.0, 1.0
             ),
             dims=[0]
         ).to(torch.float32)
         return x * weights
 
+class Mixup:
+    def __init__(self, alpha=0.01):
+        self.alpha = alpha
+        self.rand_generator = torch.distributions.beta.Beta(alpha, alpha)
+
+    def __call__(self, melspec, label):
+        return self.run(melspec, label)
+
+    def run(self, melspec, label):
+        lam = self.rand_generator.sample()
+        melspec_mixup = lam * melspec + (1 - lam) * melspec.roll(shifts=1, dims=0)
+        label_mixup = lam * label + (1 - lam) * label.roll(shifts=1, dims=0)
+        return melspec_mixup, label_mixup
+
+class LabelSmoothing:
+    def __init__(self, eps=0.01, n_class=265):
+        eyes = torch.eye(n_class)
+        self.softlabels = torch.where(eyes<=0, eps/(n_class-1), 1-eps).to(torch.float32)
+
+    def __call__(self, label):
+        return self.run(label)
+
+    def run(self, label):
+        return torch.matmul(label.to(torch.float32), self.softlabels)
+
 class SpecAugmentation:
     def __init__(self, config):
         self.config = config
-        self.transform = self.create_transform()
+        self.spec_transform = self.create_spec_transform()
+        self.label_transform = self.create_label_transform()
+        self.mixup = self.create_mixup()
         pass
 
-    def create_transform(self):
-        augmentations = []
+    def create_mixup(self):
+        if ("mixup" in self.config.keys()) and (self.config["mixup"] is not None):
+            return Mixup(self.config["mixup"]["alpha"])
 
+    def create_label_transform(self):
+        if ("label_smoothing" in self.config.keys()) and (self.config["label_smoothing"] is not None):
+            return LabelSmoothing(
+                self.config["label_smoothing"]["eps"],
+                self.config["label_smoothing"]["n_class"]
+            )
+
+    def create_spec_transform(self):
+        augmentations = []
         ### TimeStretch
         # if self.config["time_stretch"] is not None:
         #     timestretch = Tv.RandomApply([
@@ -132,7 +173,7 @@ class SpecAugmentation:
         #         p=self.config["time_stretch"]["probability"]
         #     )
         #     augmentations.append(timestretch)
-        if self.config["pitch_shift"] is not None:
+        if ("pitch_shift" in self.config.keys()) and (self.config["pitch_shift"] is not None):
             pitchshift = Tv.RandomApply([
                 Tv.RandomAffine(
                     degrees=0,
@@ -141,7 +182,7 @@ class SpecAugmentation:
                 p=self.config["pitch_shift"]["probability"]
             )
             augmentations.append(pitchshift)
-        if self.config["time_shift"] is not None:
+        if ("time_shift" in self.config.keys()) and (self.config["time_shift"] is not None):
             timeshift = Tv.RandomApply([
                 Tv.RandomAffine(
                     degrees=0,
@@ -150,25 +191,25 @@ class SpecAugmentation:
                 p=self.config["time_shift"]["probability"]
             )
             augmentations.append(timeshift)
-        if self.config["freq_mask"] is not None:
+        if ("freq_mask" in self.config.keys()) and (self.config["freq_mask"] is not None):
             freqmask = Tv.RandomApply(
                 [Ta.FrequencyMasking(self.config["freq_mask"]["max"])],
                 p=self.config["freq_mask"]["probability"]
             )
             augmentations.append(freqmask)
-        if self.config["time_mask"] is not None:
+        if ("time_mask" in self.config.keys()) and (self.config["time_mask"] is not None):
             timemask = Tv.RandomApply(
                 [Ta.TimeMasking(self.config["time_mask"]["max"])],
                 p=self.config["time_mask"]["probability"]
             )
             augmentations.append(timemask)
-        if self.config["fadein"] is not None:
+        if ("fadein" in self.config.keys()) and (self.config["fadein"] is not None):
             fadein = Tv.RandomApply(
                 [Fadein(self.config["fadein"]["max"])],
                 p=self.config["fadein"]["probability"]
             )
             augmentations.append(fadein)
-        if self.config["fadein"] is not None:
+        if ("fadeout" in self.config.keys()) and (self.config["fadeout"] is not None):
             fadeout = Tv.RandomApply(
                 [Fadeout(self.config["fadeout"]["max"])],
                 p=self.config["fadeout"]["probability"]
@@ -178,8 +219,14 @@ class SpecAugmentation:
             return None
         return Tv.Compose(augmentations)
 
-    def __call__(self, melspec):
-        return self.run(melspec)
+    def __call__(self, melspec, label=None):
+        return self.run(melspec, label)
 
-    def run(self, melspec):
-        return self.transform(melspec)
+    def run(self, melspec, label=None):
+        if label is None:
+            return self.spec_transform(melspec)
+        if self.mixup is not None:
+            melspec, label = self.mixup(melspec, label)
+        melspec = self.spec_transform(melspec)
+        label = self.label_transform(label)
+        return melspec, label
