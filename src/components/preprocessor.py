@@ -30,7 +30,12 @@ class DataPreprocessor:
             columns=["filepath"]
         )
         df["labels"] = df_meta.apply(self._primary_label, axis=1)
+        df["label_id"] = self._label_to_id(df)
         return df
+
+    def _label_to_id(self, df):
+        labels = self.config["labels"]
+        return [labels.index(l[0]) for l in df["labels"]]
 
     def train_dataset_for_pretrain(self):
         df = pd.DataFrame(

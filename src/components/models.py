@@ -16,6 +16,7 @@ import traceback
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[0]))
 from loss_functions import FocalLoss
+from augmentation import Mixup, LabelSmoothing
 
 class BirdClefModel(LightningModule):
     def __init__(self, config):
@@ -338,7 +339,7 @@ class AttBlockV2(nn.Module):
             return torch.sigmoid(x)
 
 class TimmSEDBaseConfig(PretrainedConfig):
-    effnet_pretrained = False
+    effnet_pretrained = True
 
 class TimmSEDBaseModel(PreTrainedModel):
     def __init__(self, config):
@@ -352,7 +353,7 @@ class TimmSEDBaseModel(PreTrainedModel):
         bn0 = nn.BatchNorm2d(256)
         # encoder
         base_model = timm.create_model(
-            "tf_efficientnet_b6_ns",
+            "tf_efficientnet_b4_ns",
             pretrained=self.effnet_pretrained,
             num_classes=0,
             global_pool="",
@@ -375,8 +376,9 @@ class TimmSEDBaseModel(PreTrainedModel):
 
         x = torch.mean(x, dim=2)
 
-        x = F.max_pool1d(x, kernel_size=3, stride=1, padding=1) \
-          + F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x1 = F.max_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x2 = F.avg_pool1d(x, kernel_size=3, stride=1, padding=1)
+        x = x1 + x2
 
         return x
 
@@ -389,6 +391,12 @@ class BirdClefTimmSEDModel(LightningModule):
         self.base_model, self.linear, self.att_block = self._create_model()
         self.criterion = eval(config["loss"]["name"])(**self.config["loss"]["params"])
 
+        # augmentation
+        self.mixup = Mixup(config["mixup"]["alpha"])
+        self.label_smoothing = LabelSmoothing(
+            config["label_smoothing"]["eps"], config["num_class"]
+        )
+
         # variables
         self.val_probs = np.nan
         self.val_labels = np.nan
@@ -396,11 +404,14 @@ class BirdClefTimmSEDModel(LightningModule):
 
     def _create_model(self):
         # basemodel
-        dummy_config = PretrainedConfig()
-        base_model = TimmSEDBaseModel.from_pretrained(
-            self.config["base_model_name"],
-            config=dummy_config
-        )
+        if self.config["base_model_name"] is not None:
+            base_model = TimmSEDBaseModel.from_pretrained(
+                self.config["base_model_name"],
+                config=TimmSEDBaseConfig()
+            )
+        else:
+            base_model = TimmSEDBaseModel(TimmSEDBaseConfig())
+
         # linear
         linear = nn.Linear(
             base_model.num_features,
@@ -426,16 +437,18 @@ class BirdClefTimmSEDModel(LightningModule):
         return clipwise_output
 
     def training_step(self, batch, batch_idx):
-        features, labels = batch
-        logits = self.forward(features)
+        melspec, labels = batch
+        melspec, labels = self.mixup(melspec, labels)
+        labels = self.label_smoothing(labels)
+        logits = self.forward(melspec)
         loss = self.criterion(logits, labels)
         logit = logits.detach()
         label = labels.detach()
         return {"loss": loss, "logit": logit, "label": label}
 
     def validation_step(self, batch, batch_idx):
-        features, labels = batch
-        logits = self.forward(features)
+        melspec, labels = batch
+        logits = self.forward(melspec)
         loss = self.criterion(logits, labels)
         logit = logits.detach()
         prob = logits.softmax(axis=1).detach()
@@ -443,8 +456,8 @@ class BirdClefTimmSEDModel(LightningModule):
         return {"loss": loss, "logit": logit, "prob": prob, "label": label}
 
     def predict_step(self, batch, batch_idx):
-        features = batch
-        logits = self.forward(features)
+        melspec = batch
+        logits = self.forward(melspec)
         prob = logits.softmax(axis=1).detach()
         return {"prob": prob}
 
@@ -513,119 +526,13 @@ class BirdClefTimmSEDSimCLRModel(LightningModule):
 
     def forward(self, input_data):
         x = self.base_model(input_data)
-        features = self.projection(x.flatten(start_dim=1))
-        return features
+        melspec = self.projection(x.flatten(start_dim=1))
+        return melspec
 
     def training_step(self, batch, batch_idx):
-        features_0, features_1 = batch
-        logits_0 = self.forward(features_0)
-        logits_1 = self.forward(features_1)
-        loss = self.criterion(logits_0, logits_1)
-        return {"loss": loss}
-
-    def training_epoch_end(self, outputs):
-        metrics = torch.tensor([out["loss"] for out in outputs]).mean()
-        self.log(f"train_loss", metrics)
-
-        return super().training_epoch_end(outputs)
-
-    def configure_optimizers(self):
-        optimizer = eval(self.config["optimizer"]["name"])(
-            self.parameters(), **self.config["optimizer"]["params"]
-        )
-        scheduler = eval(self.config["scheduler"]["name"])(
-            optimizer, **self.config["scheduler"]["params"]
-        )
-        return [optimizer], [scheduler]
-
-    def save_pretrained_model(self):
-        self.base_model.save_pretrained(save_directory=self.config["save_directory"])
-
-
-class BirdClefTimmSEDSimCLRModel(LightningModule):
-    def __init__(self, config):
-        super().__init__()
-
-        # const
-        self.config = config
-        self.base_model, self.projection = self._create_model()
-        self.criterion = NTXentLoss()
-
-        # variables
-        self.val_probs = np.nan
-        self.val_labels = np.nan
-        self.min_loss = np.nan
-
-    def _create_model(self):
-        # encoder
-        dummy_config = TimmSEDBaseConfig()
-        base_model = TimmSEDBaseModel(dummy_config)
-
-        projection = SimCLRProjectionHead(base_model.num_features*10, 2048, 2048)
-        return base_model, projection
-
-    def forward(self, input_data):
-        x = self.base_model(input_data)
-        features = self.projection(x.flatten(start_dim=1))
-        return features
-
-    def training_step(self, batch, batch_idx):
-        features_0, features_1 = batch
-        logits_0 = self.forward(features_0)
-        logits_1 = self.forward(features_1)
-        loss = self.criterion(logits_0, logits_1)
-        return {"loss": loss}
-
-    def training_epoch_end(self, outputs):
-        metrics = torch.tensor([out["loss"] for out in outputs]).mean()
-        self.log(f"train_loss", metrics)
-
-        return super().training_epoch_end(outputs)
-
-    def configure_optimizers(self):
-        optimizer = eval(self.config["optimizer"]["name"])(
-            self.parameters(), **self.config["optimizer"]["params"]
-        )
-        scheduler = eval(self.config["scheduler"]["name"])(
-            optimizer, **self.config["scheduler"]["params"]
-        )
-        return [optimizer], [scheduler]
-
-    def save_pretrained_model(self):
-        self.base_model.save_pretrained(save_directory=self.config["save_directory"])
-
-
-class BirdClefTimmSEDSimCLRModel(LightningModule):
-    def __init__(self, config):
-        super().__init__()
-
-        # const
-        self.config = config
-        self.base_model, self.projection = self._create_model()
-        self.criterion = NTXentLoss()
-
-        # variables
-        self.val_probs = np.nan
-        self.val_labels = np.nan
-        self.min_loss = np.nan
-
-    def _create_model(self):
-        # encoder
-        dummy_config = TimmSEDBaseConfig()
-        base_model = TimmSEDBaseModel(dummy_config)
-
-        projection = SimCLRProjectionHead(base_model.num_features*10, 2048, 2048)
-        return base_model, projection
-
-    def forward(self, input_data):
-        x = self.base_model(input_data)
-        features = self.projection(x.flatten(start_dim=1))
-        return features
-
-    def training_step(self, batch, batch_idx):
-        features_0, features_1 = batch
-        logits_0 = self.forward(features_0)
-        logits_1 = self.forward(features_1)
+        melspec_0, melspec_1 = batch
+        logits_0 = self.forward(melspec_0)
+        logits_1 = self.forward(melspec_1)
         loss = self.criterion(logits_0, logits_1)
         return {"loss": loss}
 

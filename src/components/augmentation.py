@@ -119,7 +119,7 @@ class Fadeout:
         return x * weights
 
 class Mixup:
-    def __init__(self, alpha=0.01):
+    def __init__(self, alpha=0.01, device="cuda"):
         self.alpha = alpha
         self.rand_generator = torch.distributions.beta.Beta(alpha, alpha)
 
@@ -133,9 +133,9 @@ class Mixup:
         return melspec_mixup, label_mixup
 
 class LabelSmoothing:
-    def __init__(self, eps=0.01, n_class=265):
+    def __init__(self, eps=0.01, n_class=265, device="cuda"):
         eyes = torch.eye(n_class)
-        self.softlabels = torch.where(eyes<=0, eps/(n_class-1), 1-eps).to(torch.float32)
+        self.softlabels = torch.where(eyes<=0, eps/(n_class-1), 1-eps).to(torch.float32).to(device)
 
     def __call__(self, label):
         return self.run(label)
@@ -147,20 +147,20 @@ class SpecAugmentation:
     def __init__(self, config):
         self.config = config
         self.spec_transform = self.create_spec_transform()
-        self.label_transform = self.create_label_transform()
-        self.mixup = self.create_mixup()
+        # self.label_transform = self.create_label_transform()
+        # self.mixup = self.create_mixup()
         pass
 
-    def create_mixup(self):
-        if ("mixup" in self.config.keys()) and (self.config["mixup"] is not None):
-            return Mixup(self.config["mixup"]["alpha"])
+    # def create_mixup(self):
+    #     if ("mixup" in self.config.keys()) and (self.config["mixup"] is not None):
+    #         return Mixup(self.config["mixup"]["alpha"])
 
-    def create_label_transform(self):
-        if ("label_smoothing" in self.config.keys()) and (self.config["label_smoothing"] is not None):
-            return LabelSmoothing(
-                self.config["label_smoothing"]["eps"],
-                self.config["label_smoothing"]["n_class"]
-            )
+    # def create_label_transform(self):
+    #     if ("label_smoothing" in self.config.keys()) and (self.config["label_smoothing"] is not None):
+    #         return LabelSmoothing(
+    #             self.config["label_smoothing"]["eps"],
+    #             self.config["label_smoothing"]["n_class"]
+    #         )
 
     def create_spec_transform(self):
         augmentations = []
@@ -225,8 +225,8 @@ class SpecAugmentation:
     def run(self, melspec, label=None):
         if label is None:
             return self.spec_transform(melspec)
-        if self.mixup is not None:
-            melspec, label = self.mixup(melspec, label)
+        # if self.mixup is not None:
+        #     melspec, label = self.mixup(melspec, label)
         melspec = self.spec_transform(melspec)
-        label = self.label_transform(label)
+        # label = self.label_transform(label)
         return melspec, label

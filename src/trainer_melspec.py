@@ -25,6 +25,27 @@ from components.augmentation import SpecAugmentation
 from components.models import BirdClefTimmSEDModel
 from components.validations import MinLoss, ValidResult, ConfusionMatrix, CMeanAveragePrecision
 
+class ModelUploader(callbacks.Callback):
+    def __init__(self, model_dir, message=""):
+        self.model_dir = model_dir
+        self.message = message
+        super().__init__()
+
+    def on_save_checkpoint(self, trainer, pl_module, checkpoint) -> None:
+        epoch = trainer.current_epoch
+        if (epoch % 5 == 0):
+            self._upload_model(f"{self.message}[epoch_{epoch}]")
+        return super().on_save_checkpoint(trainer, pl_module, checkpoint)
+
+    def _upload_model(self, message):
+        try:
+            subprocess.run(
+                ["kaggle", "datasets", "version", "-m", message],
+                cwd=self.model_dir
+            )
+        except:
+            print(traceback.format_exc())
+
 class Trainer:
     def __init__(
         self, Model, DataModule, Dataset,
@@ -49,10 +70,10 @@ class Trainer:
     def run(self):
 
         # idx_train, idx_val = self._split_dataset(self.df_train)
-        kfold = sklearn.model_selection.KFold(
+        kfold = sklearn.model_selection.StratifiedKFold(
             n_splits=5, shuffle=True, random_state=config["random_seed"]
         )
-        for idx_train, idx_val in kfold.split(self.df_train):
+        for idx_train, idx_val in kfold.split(self.df_train, self.df_train["label_id"]):
             break
 
         # create datamodule
@@ -111,17 +132,6 @@ class Trainer:
         )
         return datamodule
 
-    def _create_model(self, use_checkpoint=True, filepath_checkpoint=None):
-        if not use_checkpoint:
-            return self.Model(self.config["model"])
-        if not os.path.exists(filepath_checkpoint):
-            return self.Model(self.config["model"])
-        model = self.Model.load_from_checkpoint(
-            filepath_checkpoint,
-            config=self.config["model"]
-        )
-        return model
-
     def _create_datamodule_with_alldata(self):
         # create dummy data for validation
         df_val_dummy = self.df_train.iloc[:10]
@@ -138,12 +148,7 @@ class Trainer:
 
     def _train_with_crossvalid(self, datamodule, fold):
         # create model
-        checkpoint_name = f"{self.config['modelname']}_{fold}"
-        filepath_checkpoint = f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
-        model = self._create_model(
-            config["use_checkpoint"],
-            filepath_checkpoint
-        )
+        model = self.Model(self.config["model"])
 
         ###
         # define pytorch_lightning callbacks
@@ -156,26 +161,34 @@ class Trainer:
         # define learning rate monitor
         lr_monitor = callbacks.LearningRateMonitor()
         # define check point
+        checkpoint_name = f"{self.config['modelname']}_{fold}"
         loss_checkpoint = callbacks.ModelCheckpoint(
             filename=checkpoint_name,
             monitor="val_loss",
             **self.config["checkpoint"]
         )
+        # define model uploader
+        model_uploader = ModelUploader(
+            model_dir=self.config["path"]["model_dir"]
+        )
 
         # define trainer
         trainer = pl.Trainer(
             logger=self.mlflow_logger,
-            callbacks=[lr_monitor, loss_checkpoint, earlystopping],
+            callbacks=[lr_monitor, loss_checkpoint, earlystopping, model_uploader],
             **self.config["trainer"],
         )
 
         # train
-        trainer.fit(model, datamodule=datamodule)
+        filepath_checkpoint = None
+        if self.config["use_checkpoint"] and os.path.exists(self.config["path"]["checkpoint"]):
+            filepath_checkpoint = self.config["path"]["checkpoint"]
+        trainer.fit(model, datamodule=datamodule, ckpt_path=filepath_checkpoint)
 
         # logging
         self.mlflow_logger.experiment.log_artifact(
             self.mlflow_logger.run_id,
-            f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt"
+            f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
         )
         min_loss = copy.deepcopy(model.min_loss)
 
@@ -187,12 +200,7 @@ class Trainer:
 
     def _train_without_valid(self, datamodule, min_loss):
         # create model
-        checkpoint_name = self.config["modelname"]
-        filepath_checkpoint = f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
-        model = self._create_model(
-            self.config["use_checkpoint"],
-            filepath_checkpoint
-        )
+        model = self.Model(self.config["model"])
 
         ###
         # define pytorch_lightning callbacks
@@ -206,26 +214,34 @@ class Trainer:
         # define learning rate monitor
         lr_monitor = callbacks.LearningRateMonitor()
         # define check point
+        checkpoint_name = self.config["modelname"]
         loss_checkpoint = callbacks.ModelCheckpoint(
             filename=checkpoint_name,
             monitor="train_loss",
             **self.config["checkpoint"]
         )
+        # define model uploader
+        model_uploader = ModelUploader(
+            model_dir=self.config["path"]["model_dir"]
+        )
 
         # define trainer
         trainer = pl.Trainer(
             logger=self.mlflow_logger,
-            callbacks=[lr_monitor, loss_checkpoint, earlystopping],
+            callbacks=[lr_monitor, loss_checkpoint, earlystopping, model_uploader],
             **self.config["trainer"],
         )
 
         # train
-        trainer.fit(model, datamodule=datamodule)
+        filepath_checkpoint = None
+        if self.config["use_checkpoint"] and os.path.exists(self.config["path"]["checkpoint"]):
+            filepath_checkpoint = self.config["path"]["checkpoint"]
+        trainer.fit(model, datamodule=datamodule, ckpt_path=filepath_checkpoint)
 
         # logging
         self.mlflow_logger.experiment.log_artifact(
             self.mlflow_logger.run_id,
-            f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt"
+            f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
         )
 
         # clean memory
@@ -234,9 +250,7 @@ class Trainer:
 
     def _valid(self, datamodule, fold):
         # load model
-        checkpoint_name = f"{self.config['modelname']}_{fold}"
-        filepath_checkpoint = f"{self.config['path']['temporal_dir']}/{checkpoint_name}.ckpt"
-        model = self._create_model(filepath_checkpoint=filepath_checkpoint)
+        model = self.Model(self.config["model"])
         model.eval()
 
         # define trainer
@@ -246,7 +260,8 @@ class Trainer:
         )
 
         # validation
-        trainer.validate(model, datamodule=datamodule)
+        filepath_checkpoint = f"{self.config['path']['model_dir']}/{self.config['modelname']}_{fold}.ckpt"
+        trainer.validate(model, datamodule=datamodule, filepath_checkpoint=filepath_checkpoint)
 
         # get result
         val_probs = copy.deepcopy(model.val_probs)
@@ -271,6 +286,11 @@ def update_config(config, filepath_config):
     dirpath_model = pathlib.Path(config["path"]["model_dir"])
     filename_config = pathlib.Path(filepath_config).name
     shutil.copy2(filepath_config, str(dirpath_model / filename_config))
+
+def remove_exist_models(config):
+    filepaths_ckpt = glob.glob(f"{config['path']['model_dir']}/*.ckpt")
+    for fp in filepaths_ckpt:
+        os.remove(fp)
 
 def update_model(config):
     # copy Models from temporal_dir to model_dir
@@ -336,8 +356,9 @@ if __name__=="__main__":
     torch.set_float32_matmul_precision("medium")
 
     # Preprocess
-    data_preprocessor = DataPreprocessor(config)
+    remove_exist_models(config)
     fix_seed(config["random_seed"])
+    data_preprocessor = DataPreprocessor(config)
     df_train = data_preprocessor.train_dataset_primary()
 
     # Augmentation

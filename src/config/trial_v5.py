@@ -52,11 +52,12 @@ config = {
     "experiment_name": "birdclef2023-trial-v5",
     "path": {
         "traindata": "/kaggle/input/birdclef-2023-oversampled-5sec/train_melspec_v1/",
-        "trainmeta": "/kaggle/input/birdclef-2023-oversampled-5sec/train_metadata_v1.csv",
+        "trainmeta": "/kaggle/input/birdclef-2023-oversampled-5sec/train_metadata_v1_1.csv",
         "testdata": "/kaggle/input/birdclef-2023-oversampled-5sec/train_melspec_v1/",
         "preddata": "/kaggle/input/birdclef-2023/test_soundscapes/",
         "temporal_dir": "../tmp/artifacts/",
-        "model_dir": "/kaggle/input/birdclef2023-trial-v5/"
+        "model_dir": "/kaggle/input/birdclef2023-trial-v5/",
+        "checkpoint": "/workspace/tmp/checkpoint/best_loss_0.ckpt"
     },
     "modelname": "best_loss",
     "use_checkpoint": False,
@@ -98,11 +99,17 @@ config["augmentation"] = {
     }
 }
 config["model"] = {
-    "base_model_name": "/workspace/data/model/birdclef2023_pretrained_v1/",
+    "base_model_name": None,
     "input_channels": 1,
     "num_class": 265,
     "n_mels": config["n_mels"],
     "gradient_checkpointing": True,
+    "mixup": {
+        "alpha": 0.2
+    },
+    "label_smoothing": {
+        "eps": 0.01
+    },
     "loss": {
         "name": "nn.CrossEntropyLoss",
         "params": {
@@ -118,16 +125,16 @@ config["model"] = {
     "scheduler":{
         "name": "optim.lr_scheduler.CosineAnnealingWarmRestarts",
         "params":{
-            "T_0": 20,
-            "eta_min": 1e-4,
+            "T_0": 15,
+            "eta_min": 1e-7,
         }
     }
 }
 config["earlystopping"] = {
-    "patience": 2
+    "patience": 5
 }
 config["checkpoint"] = {
-    "dirpath": config["path"]["temporal_dir"],
+    "dirpath": config["path"]["model_dir"],
     "save_top_k": 1,
     "mode": "min",
     "save_last": False,
@@ -137,7 +144,7 @@ config["trainer"] = {
     "accelerator": "gpu",
     "devices": 1,
     "max_epochs": 100,
-    "accumulate_grad_batches": 8,
+    "accumulate_grad_batches": 16,
     "fast_dev_run": False,
     "deterministic": False,
     "num_sanity_val_steps": 0,
@@ -149,7 +156,6 @@ config["datamodule"] = {
         "num_class": config["model"]["num_class"],
         "label": config["label"],
         "labels": config["labels"],
-        "smooth_eps": 0.01,
         "mean": 0.485,
         "std": 0.229,
         "melspec": {
@@ -165,21 +171,21 @@ config["datamodule"] = {
         "duration_sec": config["duration_sec"]
     },
     "train_loader": {
-        "batch_size": 8,
+        "batch_size": 16,
         "shuffle": True,
         "num_workers": 8,
         "pin_memory": True,
         "drop_last": True,
     },
     "val_loader": {
-        "batch_size": 8,
+        "batch_size": 16,
         "shuffle": False,
         "num_workers": 8,
         "pin_memory": True,
         "drop_last": False
     },
     "pred_loader": {
-        "batch_size": 8,
+        "batch_size": 16,
         "shuffle": False,
         "num_workers": 8,
         "pin_memory": False,

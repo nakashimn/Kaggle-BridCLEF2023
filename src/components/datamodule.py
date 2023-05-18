@@ -171,10 +171,10 @@ class BirdClefMelspecDataset(Dataset):
         self.labels = None
         if self.config["label"] in df.keys():
             self.labels = self._read_labels(df[self.config["label"]])
-        self.pre_transform = Tv.Compose([
-            Tv.ToTensor(),
-            Tv.Normalize(config["mean"], config["std"])
-        ])
+        self.pre_transform = A.Compose(
+            [A.Normalize(config["mean"], config["std"])]
+        )
+        self.to_tensor = Tv.ToTensor()
         self.transform = transform
 
     def __len__(self):
@@ -183,7 +183,8 @@ class BirdClefMelspecDataset(Dataset):
     def __getitem__(self, idx):
         melspec = self._read_melspec(self.filepaths[idx])
         melspec = self._normalize(melspec)
-        melspec = self.pre_transform(melspec)
+        melspec = self.pre_transform(image=melspec)["image"]
+        melspec = self.to_tensor(melspec)
         if self.transform is not None:
             melspec = self.transform(melspec)
         if self.labels is not None:
