@@ -50,6 +50,7 @@ config = {
         "none"
     ],
     "experiment_name": "birdclef2023-trial-v5",
+    "run_id": None,
     "path": {
         "traindata": "/kaggle/input/birdclef-2023-oversampled-5sec/train_melspec_v1/",
         "trainmeta": "/kaggle/input/birdclef-2023-oversampled-5sec/train_metadata_v1_1.csv",
@@ -60,7 +61,7 @@ config = {
         "checkpoint": "/workspace/tmp/checkpoint/best_loss_0.ckpt"
     },
     "modelname": "best_loss",
-    "use_checkpoint": False,
+    "upload_every_n_epochs": 5,
     "sampling_rate": 32000,
     "chunk_sec": 5,
     "duration_sec": 5,
@@ -119,14 +120,14 @@ config["model"] = {
     "optimizer":{
         "name": "optim.RAdam",
         "params":{
-            "lr": 1e-3
+            "lr": 5e-4
         },
     },
     "scheduler":{
         "name": "optim.lr_scheduler.CosineAnnealingWarmRestarts",
         "params":{
-            "T_0": 15,
-            "eta_min": 1e-7,
+            "T_0": 10,
+            "eta_min": 0,
         }
     }
 }
@@ -145,9 +146,7 @@ config["trainer"] = {
     "devices": 1,
     "max_epochs": 100,
     "accumulate_grad_batches": 16,
-    "fast_dev_run": False,
     "deterministic": False,
-    "num_sanity_val_steps": 0,
     "precision": 32
 }
 config["datamodule"] = {
@@ -170,26 +169,9 @@ config["datamodule"] = {
         "chunk_sec": config["chunk_sec"],
         "duration_sec": config["duration_sec"]
     },
-    "train_loader": {
+    "dataloader": {
         "batch_size": 16,
-        "shuffle": True,
-        "num_workers": 8,
-        "pin_memory": True,
-        "drop_last": True,
-    },
-    "val_loader": {
-        "batch_size": 16,
-        "shuffle": False,
-        "num_workers": 8,
-        "pin_memory": True,
-        "drop_last": False
-    },
-    "pred_loader": {
-        "batch_size": 16,
-        "shuffle": False,
-        "num_workers": 8,
-        "pin_memory": False,
-        "drop_last": False
+        "num_workers": 8
     }
 }
 config["Metrics"] = {

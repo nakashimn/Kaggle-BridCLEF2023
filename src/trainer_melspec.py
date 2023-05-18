@@ -17,6 +17,7 @@ from pytorch_lightning import callbacks
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import MLFlowLogger
 import sklearn.model_selection
+import mlflow
 import traceback
 
 from components.preprocessor import DataPreprocessor
@@ -26,16 +27,36 @@ from components.models import BirdClefTimmSEDModel
 from components.validations import MinLoss, ValidResult, ConfusionMatrix, CMeanAveragePrecision
 
 class ModelUploader(callbacks.Callback):
-    def __init__(self, model_dir, message=""):
+    def __init__(self, model_dir, every_n_epochs=5, message=""):
         self.model_dir = model_dir
+        self.every_n_epochs = every_n_epochs
         self.message = message
+        self.should_upload = False
         super().__init__()
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint) -> None:
-        epoch = trainer.current_epoch
-        if (epoch % 5 == 0):
-            self._upload_model(f"{self.message}[epoch_{epoch}]")
+        if self.should_upload:
+            self._upload_model(
+                f"{self.message}[epoch:{trainer.current_epoch}]"
+            )
+            self._update_checkpoint = False
         return super().on_save_checkpoint(trainer, pl_module, checkpoint)
+
+    def on_train_epoch_end(self, trainer, pl_module) -> None:
+        if self.every_n_epochs is None:
+            return super().on_train_epoch_end(trainer, pl_module)
+        if (self.every_n_epochs <= 0):
+            return super().on_train_epoch_end(trainer, pl_module)
+        if (trainer.current_epoch % self.every_n_epochs == 0):
+            self.should_upload = True
+        return super().on_train_epoch_end(trainer, pl_module)
+
+    def on_train_end(self, trainer, pl_module) -> None:
+        if self.every_n_epochs is not None:
+            self._upload_model(
+                f"{self.message}[epoch:{trainer.current_epoch}]"
+            )
+        return super().on_train_end(trainer, pl_module)
 
     def _upload_model(self, message):
         try:
@@ -68,59 +89,45 @@ class Trainer:
         self.val_labels = ValidResult()
 
     def run(self):
-
         # idx_train, idx_val = self._split_dataset(self.df_train)
         kfold = sklearn.model_selection.StratifiedKFold(
             n_splits=5, shuffle=True, random_state=config["random_seed"]
         )
-        for idx_train, idx_val in kfold.split(self.df_train, self.df_train["label_id"]):
+        for fold, (idx_train, idx_val) in enumerate(kfold.split(self.df_train, self.df_train["label_id"])):
+            # create datamodule
+            datamodule = self._create_datamodule(idx_train, idx_val)
+
+            # train crossvalid models
+            min_loss = self._train(datamodule, fold=fold)
+            self.min_loss.update(min_loss)
+
+            # valid
+            val_probs, val_labels = self._valid(datamodule, fold=fold)
+            self.val_probs.append(val_probs)
+            self.val_labels.append(val_labels)
+
+            # log
+            self.mlflow_logger.log_metrics({"train_min_loss": self.min_loss.value})
+
             break
 
-        # create datamodule
-        datamodule = self._create_datamodule(idx_train, idx_val)
-
-        # train crossvalid models
-        min_loss = self._train_with_crossvalid(datamodule, 0)
-        self.min_loss.update(min_loss)
-
-        # valid
-        val_probs, val_labels = self._valid(datamodule, 0)
-        self.val_probs.append(val_probs)
-        self.val_labels.append(val_labels)
-
-        # log
-        self.mlflow_logger.log_metrics({"train_min_loss": self.min_loss.value})
-
         # train final model
-        if self.config["train_with_alldata"]:
-            datamodule = self._create_datamodule_with_alldata()
-            self._train_without_valid(datamodule, self.min_loss.value)
+        if not self.config["train_with_alldata"]:
+            return
+        datamodule = self._create_datamodule()
+        self._train(datamodule, min_loss=self.min_loss.value)
 
-    def _split_dataset(self, df, duration=5, ext="npz", th_counts=1):
-        anchor_word = f"_{duration:d}.{ext}"
-        # pickup minor label
-        df_start = df.loc[df["filepath"].str.contains(anchor_word)]
-        counts = df_start["labels"].value_counts()
-        minor_labels = list(counts[counts<=th_counts].index)
-
-        # get training indices
-        idx_train = df.loc[
-            ~df["filepath"].str.contains(anchor_word) |
-            df["labels"].isin(minor_labels)
-        ].index
-
-        # get validation indices
-        idx_val = df.loc[
-            df["filepath"].str.contains(anchor_word) &
-            ~df["labels"].isin(minor_labels)
-        ].index
-        print(f"train:{len(idx_train)} / val:{len(idx_val)}")
-        return idx_train, idx_val
-
-    def _create_datamodule(self, idx_train, idx_val):
+    def _create_datamodule(self, idx_train=None, idx_val=None):
         # fold dataset
-        df_train_fold = self.df_train.loc[idx_train].reset_index(drop=True)
-        df_val_fold = self.df_train.loc[idx_val].reset_index(drop=True)
+        if (idx_train is None):
+            df_train_fold = self.df_train
+        else:
+            df_train_fold = self.df_train.loc[idx_train].reset_index(drop=True)
+        if (idx_val is None):
+            df_val_fold = None
+        else:
+            df_val_fold = self.df_train.loc[idx_val].reset_index(drop=True)
+
         # create datamodule
         datamodule = self.DataModule(
             df_train=df_train_fold,
@@ -132,58 +139,76 @@ class Trainer:
         )
         return datamodule
 
-    def _create_datamodule_with_alldata(self):
-        # create dummy data for validation
-        df_val_dummy = self.df_train.iloc[:10]
-        # create datamodule
-        datamodule = self.DataModule(
-            df_train=self.df_train,
-            df_val=df_val_dummy,
-            df_pred=None,
-            Dataset=self.Dataset,
-            config=self.config["datamodule"],
-            transforms=self.transforms
-        )
-        return datamodule
-
-    def _train_with_crossvalid(self, datamodule, fold):
-        # create model
-        model = self.Model(self.config["model"])
-
-        ###
-        # define pytorch_lightning callbacks
-        ###
+    def _define_callbacks(self, callback_config):
         # define earlystopping
         earlystopping = EarlyStopping(
-            monitor="val_loss",
+            **callback_config["earlystopping"],
             **self.config["earlystopping"]
         )
         # define learning rate monitor
         lr_monitor = callbacks.LearningRateMonitor()
         # define check point
-        checkpoint_name = f"{self.config['modelname']}_{fold}"
         loss_checkpoint = callbacks.ModelCheckpoint(
-            filename=checkpoint_name,
-            monitor="val_loss",
+            **callback_config["checkpoint"],
             **self.config["checkpoint"]
         )
         # define model uploader
         model_uploader = ModelUploader(
-            model_dir=self.config["path"]["model_dir"]
+            model_dir=self.config["path"]["model_dir"],
+            every_n_epochs=self.config["upload_every_n_epochs"]
         )
+
+        callback_list = [
+            earlystopping, lr_monitor, loss_checkpoint, model_uploader
+        ]
+        return callback_list
+
+    def _train(self, datamodule, fold=None, min_delta=0.0, min_loss=None):
+        # switch mode
+        monitor = "train_loss" if (fold is None) else "val_loss"
+
+        # define saved checkpoint name
+        checkpoint_name = f"{self.config['modelname']}"
+        if fold is not None:
+            checkpoint_name += f"_{fold}"
+
+        # define loading checkpoint
+        filepath_checkpoint = None
+        if self.config["path"]["checkpoint"] and os.path.exists(self.config["path"]["checkpoint"]):
+            filepath_checkpoint = self.config["path"]["checkpoint"]
+
+        # create model
+        model = self.Model(self.config["model"])
+
+        # define pytorch_lightning callbacks
+        callback_config = {
+            "earlystopping": {
+                "monitor": monitor,
+                "min_delta": min_delta,
+                "stopping_threshold": min_loss
+            },
+            "checkpoint": {
+                "filename": checkpoint_name,
+                "monitor": monitor
+            }
+        }
+        callback_list = self._define_callbacks(callback_config)
 
         # define trainer
         trainer = pl.Trainer(
             logger=self.mlflow_logger,
-            callbacks=[lr_monitor, loss_checkpoint, earlystopping, model_uploader],
-            **self.config["trainer"],
+            callbacks=callback_list,
+            fast_dev_run=False,
+            num_sanity_val_steps=0,
+            **self.config["trainer"]
         )
 
         # train
-        filepath_checkpoint = None
-        if self.config["use_checkpoint"] and os.path.exists(self.config["path"]["checkpoint"]):
-            filepath_checkpoint = self.config["path"]["checkpoint"]
-        trainer.fit(model, datamodule=datamodule, ckpt_path=filepath_checkpoint)
+        trainer.fit(
+            model,
+            datamodule=datamodule,
+            ckpt_path=filepath_checkpoint
+        )
 
         # logging
         self.mlflow_logger.experiment.log_artifact(
@@ -197,56 +222,6 @@ class Trainer:
         gc.collect()
 
         return min_loss
-
-    def _train_without_valid(self, datamodule, min_loss):
-        # create model
-        model = self.Model(self.config["model"])
-
-        ###
-        # define pytorch_lightning callbacks
-        ###
-        # define earlystopping
-        earlystopping = EarlyStopping(
-            monitor="train_loss",
-            stopping_threshold=min_loss,
-            **self.config["earlystopping"]
-        )
-        # define learning rate monitor
-        lr_monitor = callbacks.LearningRateMonitor()
-        # define check point
-        checkpoint_name = self.config["modelname"]
-        loss_checkpoint = callbacks.ModelCheckpoint(
-            filename=checkpoint_name,
-            monitor="train_loss",
-            **self.config["checkpoint"]
-        )
-        # define model uploader
-        model_uploader = ModelUploader(
-            model_dir=self.config["path"]["model_dir"]
-        )
-
-        # define trainer
-        trainer = pl.Trainer(
-            logger=self.mlflow_logger,
-            callbacks=[lr_monitor, loss_checkpoint, earlystopping, model_uploader],
-            **self.config["trainer"],
-        )
-
-        # train
-        filepath_checkpoint = None
-        if self.config["use_checkpoint"] and os.path.exists(self.config["path"]["checkpoint"]):
-            filepath_checkpoint = self.config["path"]["checkpoint"]
-        trainer.fit(model, datamodule=datamodule, ckpt_path=filepath_checkpoint)
-
-        # logging
-        self.mlflow_logger.experiment.log_artifact(
-            self.mlflow_logger.run_id,
-            f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
-        )
-
-        # clean memory
-        del model
-        gc.collect()
 
     def _valid(self, datamodule, fold):
         # load model
@@ -277,7 +252,8 @@ def create_mlflow_logger(config):
     timestamp = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
     mlflow_logger = MLFlowLogger(
         experiment_name=config["experiment_name"],
-        run_name=timestamp
+        run_name=timestamp,
+        run_id=config["run_id"]
     )
     return mlflow_logger
 
@@ -291,14 +267,6 @@ def remove_exist_models(config):
     filepaths_ckpt = glob.glob(f"{config['path']['model_dir']}/*.ckpt")
     for fp in filepaths_ckpt:
         os.remove(fp)
-
-def update_model(config):
-    # copy Models from temporal_dir to model_dir
-    filepaths_ckpt = glob.glob(f"{config['path']['temporal_dir']}/*.ckpt")
-    dirpath_model = pathlib.Path(config["path"]["model_dir"])
-    for filepath_ckpt in filepaths_ckpt:
-        filename = pathlib.Path(filepath_ckpt).name
-        shutil.move(filepath_ckpt, str(dirpath_model / filename))
 
 def upload_model(config, message):
     try:
@@ -326,12 +294,6 @@ def get_args():
         type=str,
         required=True
     )
-    parser.add_argument(
-        "-m", "--message",
-        help="message for upload to kaggle datasets.",
-        type=str,
-        required=False
-    )
     return parser.parse_args()
 
 
@@ -355,59 +317,63 @@ if __name__=="__main__":
     # torch setting
     torch.set_float32_matmul_precision("medium")
 
-    # Preprocess
-    remove_exist_models(config)
-    fix_seed(config["random_seed"])
-    data_preprocessor = DataPreprocessor(config)
-    df_train = data_preprocessor.train_dataset_primary()
+    try:
+        # Preprocess
+        remove_exist_models(config)
+        fix_seed(config["random_seed"])
+        data_preprocessor = DataPreprocessor(config)
+        df_train = data_preprocessor.train_dataset_primary()
 
-    # Augmentation
-    spec_augmentation = None
-    if config["augmentation"] is not None:
-        spec_augmentation = SpecAugmentation(
-            config["augmentation"]
+        # Augmentation
+        spec_augmentation = None
+        if config["augmentation"] is not None:
+            spec_augmentation = SpecAugmentation(
+                config["augmentation"]
+            )
+        transforms = {
+            "train": spec_augmentation,
+            "valid": None,
+            "pred": None
+        }
+
+        # Training
+        trainer = Trainer(
+            BirdClefTimmSEDModel,
+            DataModule,
+            BirdClefMelspecDataset,
+            df_train,
+            config,
+            transforms,
+            mlflow_logger
         )
-    transforms = {
-        "train": spec_augmentation,
-        "valid": None,
-        "pred": None
-    }
+        trainer.run()
 
-    # Training
-    trainer = Trainer(
-        BirdClefTimmSEDModel,
-        DataModule,
-        BirdClefMelspecDataset,
-        df_train,
-        config,
-        transforms,
-        mlflow_logger
-    )
-    trainer.run()
+        # Validation Result
+        # confmat = ConfusionMatrix(
+        #     trainer.val_probs.values,
+        #     trainer.val_labels.values,
+        #     config["Metrics"]["confmat"]
+        # )
+        # fig_confmat = confmat.draw()
+        # fig_confmat.savefig(f"{config['path']['temporal_dir']}/confmat.png")
+        # mlflow_logger.experiment.log_artifact(
+        #     mlflow_logger.run_id,
+        #     f"{config['path']['temporal_dir']}/confmat.png"
+        # )
+        cmap = CMeanAveragePrecision(
+            trainer.val_probs.values,
+            trainer.val_labels.values,
+            config["Metrics"]["cmAP"]
+        ).calc()
+        mlflow_logger.log_metrics({
+            "cmAP": cmap
+        })
+        print(f"cmAP:{cmap:.03f}")
 
-    # Validation Result
-    # confmat = ConfusionMatrix(
-    #     trainer.val_probs.values,
-    #     trainer.val_labels.values,
-    #     config["Metrics"]["confmat"]
-    # )
-    # fig_confmat = confmat.draw()
-    # fig_confmat.savefig(f"{config['path']['temporal_dir']}/confmat.png")
-    # mlflow_logger.experiment.log_artifact(
-    #     mlflow_logger.run_id,
-    #     f"{config['path']['temporal_dir']}/confmat.png"
-    # )
-    cmap = CMeanAveragePrecision(
-        trainer.val_probs.values,
-        trainer.val_labels.values,
-        config["Metrics"]["cmAP"]
-    ).calc()
-    mlflow_logger.log_metrics({
-        "cmAP": cmap
-    })
-    print(f"cmAP:{cmap:.03f}")
+    except KeyboardInterrupt:
+        print(f"mlflow.run_id: {mlflow_logger.run_id}")
+        mlflow_logger.finalize("aborted")
 
-    # Update model
-    update_model(config)
-    if args.message is not None:
-        upload_model(config, args.message)
+    except:
+        print(traceback.format_exc())
+        mlflow.delete_run(mlflow_logger.run_id)

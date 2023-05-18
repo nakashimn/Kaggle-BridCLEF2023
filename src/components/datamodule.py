@@ -305,20 +305,40 @@ class DataModule(LightningDataModule):
         dataset = self.Dataset(
             self.df_train, self.config["dataset"], self.transforms["train"]
         )
-        return DataLoader(dataset, **self.config["train_loader"])
+        dataloader = DataLoader(
+            dataset,
+            shuffle=True,
+            pin_memory=True,
+            drop_last=True,
+            **self.config["dataloader"]
+        )
+        return dataloader
 
     def val_dataloader(self):
         dataset = self.Dataset(
             self.df_val, self.config["dataset"], self.transforms["valid"]
         )
-        return DataLoader(dataset, **self.config["val_loader"])
+        dataloader = DataLoader(
+            dataset,
+            shuffle=False,
+            pin_memory=True,
+            drop_last=False,
+            **self.config["dataloader"]
+        )
+        return dataloader
 
     def predict_dataloader(self):
         dataset = self.Dataset(
             self.df_pred, self.config["dataset"], self.transforms["pred"]
         )
-        return DataLoader(dataset, **self.config["pred_loader"])
-
+        dataloader = DataLoader(
+            dataset,
+            shuffle=False,
+            pin_memory=True,
+            drop_last=False,
+            **self.config["dataloader"]
+        )
+        return dataloader
 
 ################################################################################
 ################################################################################
