@@ -58,9 +58,11 @@ config = {
         "preddata": "/kaggle/input/birdclef-2023/test_soundscapes/",
         "temporal_dir": "../tmp/artifacts/",
         "model_dir": "/kaggle/input/birdclef2023-trial-v5/",
-        "checkpoint": "/workspace/tmp/checkpoint/best_loss_0.ckpt"
+        "ckpt_dir": "/workspace/tmp/checkpoint/"
     },
     "modelname": "best_loss",
+    "init_with_checkpoint": True,
+    "resume": False,
     "upload_every_n_epochs": 5,
     "sampling_rate": 32000,
     "chunk_sec": 5,
@@ -70,6 +72,7 @@ config = {
     "train_with_alldata": True
 }
 config["augmentation"] = {
+    "ClassName": "SpecAugmentation",
     "time_stretch": {
         "probability": 0.1,
         "n_mels": 256
@@ -92,14 +95,15 @@ config["augmentation"] = {
     },
     "fadein": {
         "probability": 0.1,
-        "max": 0.5
+        "max": 0.25
     },
     "fadeout": {
         "probability": 0.1,
-        "max": 0.5
+        "max": 0.25
     }
 }
 config["model"] = {
+    "ClassName": "BirdClefTimmSEDModel",
     "base_model_name": None,
     "input_channels": 1,
     "num_class": 265,
@@ -120,13 +124,13 @@ config["model"] = {
     "optimizer":{
         "name": "optim.RAdam",
         "params":{
-            "lr": 5e-4
+            "lr": 1e-5
         },
     },
     "scheduler":{
         "name": "optim.lr_scheduler.CosineAnnealingWarmRestarts",
         "params":{
-            "T_0": 10,
+            "T_0": 100,
             "eta_min": 0,
         }
     }
@@ -150,7 +154,9 @@ config["trainer"] = {
     "precision": 32
 }
 config["datamodule"] = {
+    "ClassName": "DataModule",
     "dataset":{
+        "ClassName": "BirdClefMelspecDataset",
         "base_model_name": config["model"]["base_model_name"],
         "num_class": config["model"]["num_class"],
         "label": config["label"],
