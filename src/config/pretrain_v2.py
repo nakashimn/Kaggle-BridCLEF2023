@@ -50,6 +50,7 @@ config = {
         "none"
     ],
     "experiment_name": "birdclef2023-pretrain-v2",
+    "run_id": None,
     "path": {
         "traindata": "/kaggle/input/birdclef-2022-modified/train_melspec/",
         "trainmeta": None,
@@ -57,9 +58,11 @@ config = {
         "preddata": None,
         "temporal_dir": "../tmp/artifacts/",
         "model_dir": "/kaggle/input/birdclef2023-pretrain-v2/",
-        "start_checkpoint": None,
+        "ckpt_dir": ""
     },
     "modelname": "best_loss",
+    "init_with_checkpoint": True,
+    "resume": False,
     "sampling_rate": 32000,
     "chunk_sec": 5,
     "duration_sec": 5,
@@ -68,6 +71,7 @@ config = {
     "train_with_alldata": True
 }
 config["augmentation"] = {
+    "ClassName": "SpecAugmentation",
     "time_shift": {
         "probability": 0.5,
         "max": 0.2
@@ -90,7 +94,8 @@ config["augmentation"] = {
     }
 }
 config["model"] = {
-    "base_model_name": "tf_efficientnet_b7_ns",
+    "ClassName": "BirdClefTimmSEDSimSiamModel",
+    "base_model_name": "tf_efficientnet_b4_ns",
     "input_channels": 1,
     "num_class": 265,
     "n_mels": config["n_mels"],
@@ -111,12 +116,10 @@ config["model"] = {
     "save_directory": "/workspace/data/model/birdclef2023_pretrained_v2/"
 }
 config["earlystopping"] = {
-    "min_delta": 0.0,
     "patience": 1
 }
 config["checkpoint"] = {
     "dirpath": config["path"]["temporal_dir"],
-    "monitor": "train_loss",
     "save_top_k": -1,
     "mode": "min",
     "save_last": False,
@@ -127,13 +130,13 @@ config["trainer"] = {
     "devices": 1,
     "max_epochs": 100,
     "accumulate_grad_batches": 16,
-    "fast_dev_run": False,
     "deterministic": False,
-    "num_sanity_val_steps": 0,
     "precision": 32
 }
 config["datamodule"] = {
-    "dataset":{
+    "ClassName": "DataModule",
+    "dataset": {
+        "ClassName": "BirdClefMelspecSimSiamDataset",
         "base_model_name": config["model"]["base_model_name"],
         "num_class": config["model"]["num_class"],
         "label": config["label"],
@@ -152,27 +155,10 @@ config["datamodule"] = {
         "chunk_sec": config["chunk_sec"],
         "duration_sec": config["duration_sec"]
     },
-    "train_loader": {
+    "dataloader": {
         "batch_size": 4,
-        "shuffle": True,
         "num_workers": 8,
-        "pin_memory": True,
-        "drop_last": True,
     },
-    "val_loader": {
-        "batch_size": 4,
-        "shuffle": False,
-        "num_workers": 8,
-        "pin_memory": True,
-        "drop_last": False
-    },
-    "pred_loader": {
-        "batch_size": 4,
-        "shuffle": False,
-        "num_workers": 8,
-        "pin_memory": False,
-        "drop_last": False
-    }
 }
 config["Metrics"] = {
 }
