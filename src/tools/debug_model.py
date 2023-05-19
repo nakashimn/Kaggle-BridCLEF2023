@@ -7,7 +7,7 @@ import librosa
 from transformers import Wav2Vec2Config, Wav2Vec2FeatureExtractor, Wav2Vec2Model, PretrainedConfig
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 from config.trial_v4 import config
-from components.models import BirdClefModel, BirdClefPretrainModel, TimmSEDBaseModel, BirdClefTimmSEDPretrainModel
+from components.models import BirdClefModel, BirdClefPretrainModel, TimmSEDBaseModel, BirdClefTimmSEDSimSiamModel
 
 ###
 # sample
@@ -59,9 +59,9 @@ model = BirdClefPretrainModel.load_from_checkpoint(
 model.model = model.model.wav2vec2
 model.save_pretrained_model()
 
-from config.pretrain_v1 import config
-model =BirdClefTimmSEDPretrainModel.load_from_checkpoint(
-    f"{config['path']['model_dir']}/{config['modelname']}-v4.ckpt",
+from config.pretrain_v2 import config
+model =BirdClefTimmSEDSimSiamModel.load_from_checkpoint(
+    f"{config['path']['model_dir']}/{config['modelname']}-v1.ckpt",
     config=config["model"]
 )
 model.save_pretrained_model()
