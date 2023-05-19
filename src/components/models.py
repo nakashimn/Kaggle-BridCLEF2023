@@ -17,6 +17,7 @@ import traceback
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[0]))
 from loss_functions import FocalLoss
 from augmentation import Mixup, LabelSmoothing
+from validations import CMeanAveragePrecision
 
 class BirdClefModel(LightningModule):
     def __init__(self, config):
@@ -479,6 +480,9 @@ class BirdClefTimmSEDModel(LightningModule):
 
         self.val_probs = probs.detach().cpu().numpy()
         self.val_labels = labels.detach().cpu().numpy()
+
+        cmap = CMeanAveragePrecision(self.val_probs, self.val_labels, {"padding_num": 5}).calc()
+        self.log("cmAP", cmap)
 
         return super().validation_epoch_end(outputs)
 
