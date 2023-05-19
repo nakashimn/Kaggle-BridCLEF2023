@@ -147,32 +147,9 @@ class SpecAugmentation:
     def __init__(self, config):
         self.config = config
         self.spec_transform = self.create_spec_transform()
-        # self.label_transform = self.create_label_transform()
-        # self.mixup = self.create_mixup()
-        pass
-
-    # def create_mixup(self):
-    #     if ("mixup" in self.config.keys()) and (self.config["mixup"] is not None):
-    #         return Mixup(self.config["mixup"]["alpha"])
-
-    # def create_label_transform(self):
-    #     if ("label_smoothing" in self.config.keys()) and (self.config["label_smoothing"] is not None):
-    #         return LabelSmoothing(
-    #             self.config["label_smoothing"]["eps"],
-    #             self.config["label_smoothing"]["n_class"]
-    #         )
 
     def create_spec_transform(self):
         augmentations = []
-        ### TimeStretch
-        # if self.config["time_stretch"] is not None:
-        #     timestretch = Tv.RandomApply([
-        #         Ta.TimeStretch(
-        #             n_freq=self.config["time_stretch"]["n_mels"]
-        #         )],
-        #         p=self.config["time_stretch"]["probability"]
-        #     )
-        #     augmentations.append(timestretch)
         if ("pitch_shift" in self.config.keys()) and (self.config["pitch_shift"] is not None):
             pitchshift = Tv.RandomApply([
                 Tv.RandomAffine(
@@ -225,8 +202,5 @@ class SpecAugmentation:
     def run(self, melspec, label=None):
         if label is None:
             return self.spec_transform(melspec)
-        # if self.mixup is not None:
-        #     melspec, label = self.mixup(melspec, label)
         melspec = self.spec_transform(melspec)
-        # label = self.label_transform(label)
         return melspec, label

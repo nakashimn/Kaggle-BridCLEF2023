@@ -19,6 +19,9 @@ from loss_functions import FocalLoss
 from augmentation import Mixup, LabelSmoothing
 from validations import CMeanAveragePrecision
 
+################################################################################
+# Wav2Vec2Base Model
+################################################################################
 class BirdClefModel(LightningModule):
     def __init__(self, config):
         super().__init__()
@@ -118,6 +121,9 @@ class BirdClefModel(LightningModule):
         )
         return [optimizer], [scheduler]
 
+################################################################################
+# Wav2Vec2Base Pretrain Model
+################################################################################
 class BirdClefPretrainModel(LightningModule):
     def __init__(self, config):
         super().__init__()
@@ -186,6 +192,9 @@ class BirdClefPretrainModel(LightningModule):
     def save_pretrained_model(self):
         self.model.save_pretrained(save_directory=self.config["save_directory"])
 
+################################################################################
+# Wav2Vec2Base Classifier Model
+################################################################################
 class BirdClefBgClassifierModel(LightningModule):
     def __init__(self, config):
         super().__init__()
@@ -285,17 +294,10 @@ class BirdClefBgClassifierModel(LightningModule):
         )
         return [optimizer], [scheduler]
 
-def init_layer(layer):
-    nn.init.xavier_uniform_(layer.weight)
 
-    if hasattr(layer, "bias"):
-        if layer.bias is not None:
-            layer.bias.data.fill_(0.)
-
-def init_bn(bn):
-    bn.bias.data.fill_(0.)
-    bn.weight.data.fill_(1.0)
-
+################################################################################
+# Attention Block
+################################################################################
 class AttBlockV2(nn.Module):
     def __init__(
         self,
@@ -320,11 +322,6 @@ class AttBlockV2(nn.Module):
             stride=1,
             padding=0,
             bias=True)
-        self.init_weights()
-
-    def init_weights(self):
-        init_layer(self.att)
-        init_layer(self.cla)
 
     def forward(self, x):
         # x: (n_samples, n_in, n_time)
@@ -339,6 +336,9 @@ class AttBlockV2(nn.Module):
         elif self.activation == 'sigmoid':
             return torch.sigmoid(x)
 
+################################################################################
+# SED Model
+################################################################################
 class TimmSEDBaseConfig(PretrainedConfig):
     effnet_pretrained = True
 
@@ -495,6 +495,10 @@ class BirdClefTimmSEDModel(LightningModule):
         )
         return [optimizer], [scheduler]
 
+################################################################################
+# SED Model for Pretraining(SimCLR)
+################################################################################
+
 class BirdClefTimmSEDSimCLRModel(LightningModule):
     def __init__(self, config):
         super().__init__()
@@ -512,20 +516,7 @@ class BirdClefTimmSEDSimCLRModel(LightningModule):
     def _create_model(self):
         # encoder
         base_model = TimmSEDBaseModel()
-
         projection = SimCLRProjectionHead(base_model.num_features*10, 2048, 2048)
-        # # linear
-        # linear = nn.Linear(
-        #     base_model.num_features,
-        #     base_model.num_features,
-        #     bias=True
-        # )
-        # # attention block
-        # att_block = AttBlockV2(
-        #     base_model.num_features,
-        #     self.config["num_class"],
-        #     activation="sigmoid"
-        # )
         return base_model, projection
 
     def forward(self, input_data):
@@ -558,6 +549,9 @@ class BirdClefTimmSEDSimCLRModel(LightningModule):
     def save_pretrained_model(self):
         self.base_model.save_pretrained(save_directory=self.config["save_directory"])
 
+################################################################################
+# SED Model for Pretraining(SimSiam)
+################################################################################
 class BirdClefTimmSEDSimSiamModel(LightningModule):
     def __init__(self, config):
         super().__init__()

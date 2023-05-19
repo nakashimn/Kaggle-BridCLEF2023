@@ -73,6 +73,9 @@ class BirdClefDataset(Dataset):
     def _to_onehot(self, series):
         return [1 if l in series else 0 for l in self.config["labels"]]
 
+################################################################################
+# For Wav2Vec2 Classifier
+################################################################################
 class BirdClefBgClassifierDataset(BirdClefDataset):
     def __init__(self, df, config, transform=None):
         self.config = config
@@ -92,6 +95,9 @@ class BirdClefBgClassifierDataset(BirdClefDataset):
         df_sampled = pd.concat([df_false, df_true]).sample(frac=1, ignore_index=True)
         return df_sampled
 
+################################################################################
+# For Wav2Vec2 Prediction
+################################################################################
 class BirdClefPredDataset(Dataset):
     def __init__(self, df, config, transform=None):
         self.config = config
@@ -217,7 +223,10 @@ class BirdClefMelspecDataset(Dataset):
     def _to_onehot(self, series):
         return [1 if l in series else 0 for l in self.config["labels"]]
 
-class BirdClefPredDataset(Dataset):
+################################################################################
+# For EfficientNetBase Prediction
+################################################################################
+class BirdClefMelspecPredDataset(Dataset):
     def __init__(self, df, config, transform=None):
         self.config = config
         self.filepaths = self._read_filepaths(df)
@@ -280,6 +289,91 @@ class BirdClefPredDataset(Dataset):
         return melspec
 
 ################################################################################
+# For Pretraining(SimCLR)
+################################################################################
+class BirdClefMelspecSimCLRDataset(Dataset):
+    def __init__(self, df, config, transform=None):
+        self.config = config
+        self.filepaths = self._read_filepaths(df)
+        self.pre_transform = A.Compose(
+            [A.Normalize(config["mean"], config["std"])]
+        )
+        self.to_tensor = Tv.ToTensor()
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.filepaths)
+
+    def __getitem__(self, idx):
+        melspec = self._read_melspec(self.filepaths[idx])
+        melspec = self._normalize(melspec)
+        melspec = self.pre_transform(image=melspec)["image"]
+        melspec = self.to_tensor(melspec)
+        melspec_aug = self.transform(melspec)
+        return melspec, melspec_aug
+
+    def _read_filepaths(self, df):
+        values = df["filepath"].values
+        return values
+
+    def _read_melspec(self, filepath):
+        melspec = np.load(filepath)["arr_0"]
+        melspec = np.expand_dims(melspec, axis=-1)
+        return melspec
+
+    def _normalize(self, melspec, eps=1e-6):
+        melspec = (melspec - melspec.mean()) / (melspec.std() + eps)
+        if (melspec.max() - melspec.min()) < eps:
+            return np.zeros_like(melspec, dtype=np.uint8)
+        melspec = (
+            255 * ((melspec - melspec.min()) / (melspec.max() - melspec.min()))
+        ).astype(np.uint8)
+        return melspec
+
+################################################################################
+# For Pretraining(SimSiam)
+################################################################################
+class BirdClefMelspecSimSiamDataset(Dataset):
+    def __init__(self, df, config, transform=None):
+        self.config = config
+        self.filepaths = self._read_filepaths(df)
+        self.pre_transform = A.Compose(
+            [A.Normalize(config["mean"], config["std"])]
+        )
+        self.to_tensor = Tv.ToTensor()
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.filepaths)
+
+    def __getitem__(self, idx):
+        melspec = self._read_melspec(self.filepaths[idx])
+        melspec = self._normalize(melspec)
+        melspec = self.pre_transform(image=melspec)["image"]
+        melspec = self.to_tensor(melspec)
+        melspec_0 = self.transform(melspec)
+        melspec_1 = self.transform(melspec)
+        return melspec_0, melspec_1
+
+    def _read_filepaths(self, df):
+        values = df["filepath"].values
+        return values
+
+    def _read_melspec(self, filepath):
+        melspec = np.load(filepath)["arr_0"]
+        melspec = np.expand_dims(melspec, axis=-1)
+        return melspec
+
+    def _normalize(self, melspec, eps=1e-6):
+        melspec = (melspec - melspec.mean()) / (melspec.std() + eps)
+        if (melspec.max() - melspec.min()) < eps:
+            return np.zeros_like(melspec, dtype=np.uint8)
+        melspec = (
+            255 * ((melspec - melspec.min()) / (melspec.max() - melspec.min()))
+        ).astype(np.uint8)
+        return melspec
+
+################################################################################
 # DataModule
 ################################################################################
 class DataModule(LightningDataModule):
@@ -339,85 +433,3 @@ class DataModule(LightningDataModule):
             **self.config["dataloader"]
         )
         return dataloader
-
-################################################################################
-################################################################################
-
-class BirdClefMelspecSimCLRDataset(Dataset):
-    def __init__(self, df, config, transform=None):
-        self.config = config
-        self.filepaths = self._read_filepaths(df)
-        self.pre_transform = A.Compose(
-            [A.Normalize(config["mean"], config["std"])]
-        )
-        self.to_tensor = Tv.ToTensor()
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.filepaths)
-
-    def __getitem__(self, idx):
-        melspec = self._read_melspec(self.filepaths[idx])
-        melspec = self._normalize(melspec)
-        melspec = self.pre_transform(image=melspec)["image"]
-        melspec = self.to_tensor(melspec)
-        melspec_aug = self.transform(melspec)
-        return melspec, melspec_aug
-
-    def _read_filepaths(self, df):
-        values = df["filepath"].values
-        return values
-
-    def _read_melspec(self, filepath):
-        melspec = np.load(filepath)["arr_0"]
-        melspec = np.expand_dims(melspec, axis=-1)
-        return melspec
-
-    def _normalize(self, melspec, eps=1e-6):
-        melspec = (melspec - melspec.mean()) / (melspec.std() + eps)
-        if (melspec.max() - melspec.min()) < eps:
-            return np.zeros_like(melspec, dtype=np.uint8)
-        melspec = (
-            255 * ((melspec - melspec.min()) / (melspec.max() - melspec.min()))
-        ).astype(np.uint8)
-        return melspec
-
-class BirdClefMelspecSimSiamDataset(Dataset):
-    def __init__(self, df, config, transform=None):
-        self.config = config
-        self.filepaths = self._read_filepaths(df)
-        self.pre_transform = A.Compose(
-            [A.Normalize(config["mean"], config["std"])]
-        )
-        self.to_tensor = Tv.ToTensor()
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.filepaths)
-
-    def __getitem__(self, idx):
-        melspec = self._read_melspec(self.filepaths[idx])
-        melspec = self._normalize(melspec)
-        melspec = self.pre_transform(image=melspec)["image"]
-        melspec = self.to_tensor(melspec)
-        melspec_0 = self.transform(melspec)
-        melspec_1 = self.transform(melspec)
-        return melspec_0, melspec_1
-
-    def _read_filepaths(self, df):
-        values = df["filepath"].values
-        return values
-
-    def _read_melspec(self, filepath):
-        melspec = np.load(filepath)["arr_0"]
-        melspec = np.expand_dims(melspec, axis=-1)
-        return melspec
-
-    def _normalize(self, melspec, eps=1e-6):
-        melspec = (melspec - melspec.mean()) / (melspec.std() + eps)
-        if (melspec.max() - melspec.min()) < eps:
-            return np.zeros_like(melspec, dtype=np.uint8)
-        melspec = (
-            255 * ((melspec - melspec.min()) / (melspec.max() - melspec.min()))
-        ).astype(np.uint8)
-        return melspec
