@@ -21,9 +21,6 @@ import mlflow
 import traceback
 
 from components.preprocessor import DataPreprocessor
-from components.datamodule import BirdClefMelspecDataset, DataModule
-from components.augmentation import SpecAugmentation
-from components.models import BirdClefTimmSEDModel
 from components.validations import MinLoss, ValidResult, ConfusionMatrix, CMeanAveragePrecision
 
 class ModelUploader(callbacks.Callback):
@@ -39,10 +36,10 @@ class ModelUploader(callbacks.Callback):
             self._upload_model(
                 f"{self.message}[epoch:{trainer.current_epoch}]"
             )
-            self._update_checkpoint = False
+            self.should_upload = False
         return super().on_save_checkpoint(trainer, pl_module, checkpoint)
 
-    def on_train_epoch_end(self, trainer, pl_module) -> None:
+    def on_train_epoch_start(self, trainer, pl_module) -> None:
         if self.every_n_epochs is None:
             return super().on_train_epoch_end(trainer, pl_module)
         if (self.every_n_epochs <= 0):
@@ -139,6 +136,45 @@ class Trainer:
         )
         return datamodule
 
+    def _create_model(self, filepath_checkpoint=None):
+        if filepath_checkpoint is None:
+            return self.Model(self.config["model"])
+        if not self.config["init_with_checkpoint"]:
+            return self.Model(self.config["model"])
+        if not os.path.exists(filepath_checkpoint):
+            return self.Model(self.config["model"])
+        model = self.Model.load_from_checkpoint(
+            filepath_checkpoint,
+            config=self.config["model"]
+        )
+        return model
+
+    def _define_monitor_value(self, fold=None):
+        return "train_loss" if (fold is None) else "val_loss"
+
+    def _define_checkpoint_name(self, fold=None):
+        checkpoint_name = f"{self.config['modelname']}"
+        if fold is None:
+            return checkpoint_name
+        checkpoint_name += f"_{fold}"
+        return checkpoint_name
+
+    def _define_checkpoint_path(self, checkpoint_name):
+        filepath_ckpt_load = f"{self.config['path']['ckpt_dir']}/{checkpoint_name}.ckpt"
+        filepath_ckpt_save = f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
+        filepath_ckpt = {
+            "init": None,
+            "resume": None,
+            "save": filepath_ckpt_save
+        }
+        if not os.path.exists(filepath_ckpt_load):
+            return filepath_ckpt
+        if self.config["resume"]:
+            filepath_ckpt["resume"] = filepath_ckpt_load
+        if self.config["init_with_checkpoint"]:
+            filepath_ckpt["init"] = filepath_ckpt_load
+        return filepath_ckpt
+
     def _define_callbacks(self, callback_config):
         # define earlystopping
         earlystopping = EarlyStopping(
@@ -155,7 +191,8 @@ class Trainer:
         # define model uploader
         model_uploader = ModelUploader(
             model_dir=self.config["path"]["model_dir"],
-            every_n_epochs=self.config["upload_every_n_epochs"]
+            every_n_epochs=self.config["upload_every_n_epochs"],
+            message=self.config["experiment_name"]
         )
 
         callback_list = [
@@ -165,20 +202,13 @@ class Trainer:
 
     def _train(self, datamodule, fold=None, min_delta=0.0, min_loss=None):
         # switch mode
-        monitor = "train_loss" if (fold is None) else "val_loss"
+        monitor = self._define_monitor_value(fold)
 
         # define saved checkpoint name
-        checkpoint_name = f"{self.config['modelname']}"
-        if fold is not None:
-            checkpoint_name += f"_{fold}"
+        checkpoint_name = self._define_checkpoint_name(fold)
 
         # define loading checkpoint
-        filepath_checkpoint = None
-        if self.config["path"]["checkpoint"] and os.path.exists(self.config["path"]["checkpoint"]):
-            filepath_checkpoint = self.config["path"]["checkpoint"]
-
-        # create model
-        model = self.Model(self.config["model"])
+        filepath_checkpoint = self._define_checkpoint_path(checkpoint_name)
 
         # define pytorch_lightning callbacks
         callback_config = {
@@ -194,6 +224,9 @@ class Trainer:
         }
         callback_list = self._define_callbacks(callback_config)
 
+        # create model
+        model = self._create_model(filepath_checkpoint["init"])
+
         # define trainer
         trainer = pl.Trainer(
             logger=self.mlflow_logger,
@@ -207,13 +240,13 @@ class Trainer:
         trainer.fit(
             model,
             datamodule=datamodule,
-            ckpt_path=filepath_checkpoint
+            ckpt_path=filepath_checkpoint["resume"]
         )
 
         # logging
         self.mlflow_logger.experiment.log_artifact(
             self.mlflow_logger.run_id,
-            f"{self.config['path']['model_dir']}/{checkpoint_name}.ckpt"
+            filepath_checkpoint["save"]
         )
         min_loss = copy.deepcopy(model.min_loss)
 
@@ -236,7 +269,11 @@ class Trainer:
 
         # validation
         filepath_checkpoint = f"{self.config['path']['model_dir']}/{self.config['modelname']}_{fold}.ckpt"
-        trainer.validate(model, datamodule=datamodule, filepath_checkpoint=filepath_checkpoint)
+        trainer.validate(
+            model,
+            datamodule=datamodule,
+            ckpt_path=filepath_checkpoint
+        )
 
         # get result
         val_probs = copy.deepcopy(model.val_probs)
@@ -249,12 +286,18 @@ class Trainer:
         return val_probs, val_labels
 
 def create_mlflow_logger(config):
+    # create Logger instance
     timestamp = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
     mlflow_logger = MLFlowLogger(
         experiment_name=config["experiment_name"],
         run_name=timestamp,
         run_id=config["run_id"]
     )
+    # debug message
+    print("MLflow:")
+    print(f"  experiment_name: {config['experiment_name']}")
+    print(f"  run_name: {timestamp}")
+    print(f"  run_id: {mlflow_logger.run_id}")
     return mlflow_logger
 
 def update_config(config, filepath_config):
@@ -286,6 +329,31 @@ def fix_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+def import_classes(config):
+    # import Classes dynamically
+    Model = getattr(
+        importlib.import_module(f"components.models"),
+        config["model"]["ClassName"]
+    )
+    Dataset = getattr(
+        importlib.import_module(f"components.datamodule"),
+        config["datamodule"]["dataset"]["ClassName"]
+    )
+    DataModule = getattr(
+        importlib.import_module(f"components.datamodule"),
+        config["datamodule"]["ClassName"]
+    )
+    Augmentation = getattr(
+        importlib.import_module(f"components.augmentation"),
+        config["augmentation"]["ClassName"]
+    )
+    # debug message
+    print(f"Model: {Model.__name__}")
+    print(f"Dataset: {Dataset.__name__}")
+    print(f"DataModule: {DataModule.__name__}")
+    print(f"Augmentation: {Augmentation.__name__}")
+    return Model, Dataset, DataModule, Augmentation
+
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -302,6 +370,9 @@ if __name__=="__main__":
     # args
     args = get_args()
     config = importlib.import_module(f"config.{args.config}").config
+
+    # import Classes
+    Model, Dataset, DataModule, Augmentation = import_classes(config)
 
     # logger
     mlflow_logger = create_mlflow_logger(config)
@@ -327,7 +398,7 @@ if __name__=="__main__":
         # Augmentation
         spec_augmentation = None
         if config["augmentation"] is not None:
-            spec_augmentation = SpecAugmentation(
+            spec_augmentation = Augmentation(
                 config["augmentation"]
             )
         transforms = {
@@ -338,9 +409,9 @@ if __name__=="__main__":
 
         # Training
         trainer = Trainer(
-            BirdClefTimmSEDModel,
+            Model,
             DataModule,
-            BirdClefMelspecDataset,
+            Dataset,
             df_train,
             config,
             transforms,
@@ -372,7 +443,6 @@ if __name__=="__main__":
 
     except KeyboardInterrupt:
         print(f"mlflow.run_id: {mlflow_logger.run_id}")
-        mlflow_logger.finalize("aborted")
 
     except:
         print(traceback.format_exc())
