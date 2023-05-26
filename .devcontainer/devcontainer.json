@@ -12,6 +12,7 @@
 			"extensions": [
 				"ms-python.python",
 				"ms-python.vscode-pylance",
+				"ms-toolsai.jupyter",
 				"donjayamanne.githistory",
 				"eamodio.gitlens",
 				"ryuta46.multi-command"
