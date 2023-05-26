@@ -61,7 +61,7 @@ model.save_pretrained_model()
 
 from config.pretrain_v2 import config
 model =BirdClefTimmSEDSimSiamModel.load_from_checkpoint(
-    f"{config['path']['model_dir']}/{config['modelname']}-v1.ckpt",
+    f"{config['path']['model_dir']}/{config['modelname']}.ckpt",
     config=config["model"]
 )
 model.save_pretrained_model()
