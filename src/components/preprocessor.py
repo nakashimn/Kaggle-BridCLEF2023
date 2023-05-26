@@ -38,10 +38,8 @@ class DataPreprocessor:
         return [labels.index(l[0]) for l in df["labels"]]
 
     def train_dataset_for_pretrain(self):
-        df = pd.DataFrame(
-            {"filepath": glob.glob(f"{self.config['path']['traindata']}/**/*.npz", recursive=True)}
-        )
-        return df
+        df_meta = pd.read_csv(self.config["path"]["trainmeta"])
+        return df_meta
 
     def train_dataset_for_bg_classifier(self):
         df_meta = pd.read_csv(self.config["path"]["trainmeta"])

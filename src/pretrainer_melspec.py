@@ -17,7 +17,6 @@ from pytorch_lightning import callbacks
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import MLFlowLogger
 import sklearn.model_selection
-import mlflow
 import traceback
 
 from components.preprocessor import DataPreprocessor
@@ -66,26 +65,71 @@ class ModelUploader(callbacks.Callback):
 
 class TrainerForPretrain:
     def __init__(
-        self, Model, DataModule, Dataset,
-        df_train, config, transforms, mlflow_logger
+        self, Model, DataModule, Dataset, Augmentation,
+        df_train, config
     ):
         # const
-        self.mlflow_logger = mlflow_logger
         self.config = config
         self.df_train = df_train
-        self.transforms = transforms
+        self.timestamp = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
 
         # Class
         self.Model = Model
         self.DataModule = DataModule
         self.Dataset = Dataset
+        self.Augmentation = Augmentation
 
     def run(self):
-        # train
-        datamodule = self._create_datamodule()
-        self._train(datamodule)
+        # create logger
+        mlflow_logger = self._create_mlflow_logger()
 
-    def _create_datamodule(self, idx_train=None, idx_val=None):
+        try:
+            # create datamodule
+            transforms = self._create_transforms()
+            datamodule = self._create_datamodule(transforms=transforms)
+
+            # train with all data
+            self._train(datamodule, logger=mlflow_logger)
+
+            # finalize logger
+            mlflow_logger.finalize("success")
+
+        except:
+            mlflow_logger.finalize("failed")
+            mlflow_logger.experiment.delete_run(mlflow_logger.run_id)
+
+    def _create_mlflow_logger(self, fold=None):
+        # create Logger instance
+        experiment_name = f"{self.config['experiment_name']}[{self.timestamp}]"
+        run_name = "All" if (fold is None) else fold
+        mlflow_logger = MLFlowLogger(
+            experiment_name=experiment_name,
+            run_name=run_name
+        )
+        # save hyper_params
+        mlflow_logger.log_hyperparams(self.config)
+        mlflow_logger.experiment.log_artifact(
+            mlflow_logger.run_id,
+            f"./config/{args.config}.py"
+        )
+        # debug message
+        print("================================================")
+        print("MLflow:")
+        print(f"  experiment_name : {experiment_name}")
+        print(f"  run_name        : {run_name}")
+        print(f"  run_id          : {mlflow_logger.run_id}")
+        print("================================================")
+        return mlflow_logger
+
+    def _create_transforms(self):
+        transforms = {
+            "train": self.Augmentation(config["augmentation"]),
+            "valid": None,
+            "pred": None
+        }
+        return transforms
+
+    def _create_datamodule(self, idx_train=None, idx_val=None, transforms=None):
         # fold dataset
         if (idx_train is None):
             df_train_fold = self.df_train
@@ -103,7 +147,7 @@ class TrainerForPretrain:
             df_pred=None,
             Dataset=self.Dataset,
             config=self.config["datamodule"],
-            transforms=self.transforms
+            transforms=transforms
         )
         return datamodule
 
@@ -171,7 +215,7 @@ class TrainerForPretrain:
         ]
         return callback_list
 
-    def _train(self, datamodule, fold=None, min_delta=0.0, min_loss=None):
+    def _train(self, datamodule, fold=None, min_delta=0.0, min_loss=None, logger=None):
         # switch mode
         monitor = self._define_monitor_value(fold)
 
@@ -200,7 +244,7 @@ class TrainerForPretrain:
 
         # define trainer
         trainer = pl.Trainer(
-            logger=self.mlflow_logger,
+            logger=logger,
             callbacks=callback_list,
             fast_dev_run=False,
             num_sanity_val_steps=0,
@@ -213,13 +257,14 @@ class TrainerForPretrain:
             datamodule=datamodule,
             ckpt_path=filepath_checkpoint["resume"]
         )
+        min_loss = copy.deepcopy(model.min_loss)
 
         # logging
-        self.mlflow_logger.experiment.log_artifact(
-            self.mlflow_logger.run_id,
-            filepath_checkpoint["save"]
-        )
-        min_loss = copy.deepcopy(model.min_loss)
+        if logger is not None:
+            logger.experiment.log_artifact(
+                logger.run_id,
+                filepath_checkpoint["save"]
+            )
 
         # clean memory
         del model
@@ -227,14 +272,14 @@ class TrainerForPretrain:
 
         return min_loss
 
-    def _valid(self, datamodule, fold):
+    def _valid(self, datamodule, fold, logger=None):
         # load model
         model = self.Model(self.config["model"])
         model.eval()
 
         # define trainer
         trainer = pl.Trainer(
-            logger=self.mlflow_logger,
+            logger=logger,
             **self.config["trainer"]
         )
 
@@ -256,21 +301,6 @@ class TrainerForPretrain:
 
         return val_probs, val_labels
 
-def create_mlflow_logger(config):
-    # create Logger instance
-    timestamp = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    mlflow_logger = MLFlowLogger(
-        experiment_name=config["experiment_name"],
-        run_name=timestamp,
-        run_id=config["run_id"]
-    )
-    # debug message
-    print("MLflow:")
-    print(f"  experiment_name: {config['experiment_name']}")
-    print(f"  run_name: {timestamp}")
-    print(f"  run_id: {mlflow_logger.run_id}")
-    return mlflow_logger
-
 def update_config(config, filepath_config):
     # copy ConfigFile from temporal_dir to model_dir
     dirpath_model = pathlib.Path(config["path"]["model_dir"])
@@ -281,15 +311,6 @@ def remove_exist_models(config):
     filepaths_ckpt = glob.glob(f"{config['path']['model_dir']}/*.ckpt")
     for fp in filepaths_ckpt:
         os.remove(fp)
-
-def upload_model(config, message):
-    try:
-        subprocess.run(
-            ["kaggle", "datasets", "version", "-m", message],
-            cwd=config["path"]["model_dir"]
-        )
-    except:
-        print(traceback.format_exc())
 
 def fix_seed(seed):
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -319,10 +340,13 @@ def import_classes(config):
         config["augmentation"]["ClassName"]
     )
     # debug message
-    print(f"Model: {Model.__name__}")
-    print(f"Dataset: {Dataset.__name__}")
-    print(f"DataModule: {DataModule.__name__}")
-    print(f"Augmentation: {Augmentation.__name__}")
+    print("================================================")
+    print(f"Components:")
+    print(f"  Model        : {Model.__name__}")
+    print(f"  Dataset      : {Dataset.__name__}")
+    print(f"  DataModule   : {DataModule.__name__}")
+    print(f"  Augmentation : {Augmentation.__name__}")
+    print("================================================")
     return Model, Dataset, DataModule, Augmentation
 
 def get_args():
@@ -345,52 +369,28 @@ if __name__=="__main__":
     # import Classes
     Model, Dataset, DataModule, Augmentation = import_classes(config)
 
-    # logger
-    mlflow_logger = create_mlflow_logger(config)
-    mlflow_logger.log_hyperparams(config)
-    mlflow_logger.experiment.log_artifact(
-        mlflow_logger.run_id,
-        f"./config/{args.config}.py"
-    )
-
-    # Update config
+    # update config
     update_config(config, f"./config/{args.config}.py")
+
+    # create model dir
+    os.makedirs(config["path"]["model_dir"], exist_ok=True)
 
     # torch setting
     torch.set_float32_matmul_precision("medium")
 
-    try:
-        # Preprocess
-        remove_exist_models(config)
-        fix_seed(config["random_seed"])
-        data_preprocessor = DataPreprocessor(config)
-        df_train = data_preprocessor.train_dataset_for_pretrain()
+    # Preprocess
+    remove_exist_models(config)
+    fix_seed(config["random_seed"])
+    data_preprocessor = DataPreprocessor(config)
+    df_train = data_preprocessor.train_dataset_for_pretrain()
 
-        # Augmentation
-        spec_augmentation = Augmentation(
-            config["augmentation"]
-        )
-        transforms = {
-            "train": spec_augmentation,
-            "valid": None,
-            "pred": None
-        }
-
-        # Training
-        trainer = TrainerForPretrain(
-            Model,
-            DataModule,
-            Dataset,
-            df_train,
-            config,
-            transforms,
-            mlflow_logger
-        )
-        trainer.run()
-
-    except KeyboardInterrupt:
-        print(f"mlflow.run_id: {mlflow_logger.run_id}")
-
-    except:
-        print(traceback.format_exc())
-        mlflow.delete_run(mlflow_logger.run_id)
+    # Training
+    trainer = TrainerForPretrain(
+        Model,
+        DataModule,
+        Dataset,
+        Augmentation,
+        df_train,
+        config
+    )
+    trainer.run()

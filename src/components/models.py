@@ -294,6 +294,126 @@ class BirdClefBgClassifierModel(LightningModule):
         )
         return [optimizer], [scheduler]
 
+################################################################################
+# EfficientNet
+################################################################################
+class BirdClefEfficientNetModel(LightningModule):
+    def __init__(self, config):
+        super().__init__()
+
+        # const
+        self.config = config
+        self.bn, self.encoder, self.fc = self._create_model()
+        self.criterion = eval(config["loss"]["name"])(**self.config["loss"]["params"])
+
+        # augmentation
+        self.mixup = Mixup(config["mixup"]["alpha"])
+        self.label_smoothing = LabelSmoothing(
+            config["label_smoothing"]["eps"], config["num_class"]
+        )
+
+        # variables
+        self.val_probs = np.nan
+        self.val_labels = np.nan
+        self.min_loss = np.nan
+
+    def _create_model(self):
+        # batch_normalization
+        bn = nn.BatchNorm2d(self.config["n_mels"])
+        # basemodel
+        base_model = timm.create_model(
+            self.config["base_model_name"],
+            pretrained=True,
+            num_classes=0,
+            global_pool="",
+            in_chans=1
+        )
+        layers = list(base_model.children())[:-2]
+        encoder = nn.Sequential(*layers)
+        # linear
+        fc = nn.Sequential(
+            nn.Linear(
+                encoder[-1].num_features * 10,
+                self.config["fc_mid_dim"],
+                bias=True
+            ),
+            nn.ReLU(),
+            nn.Linear(
+                self.config["fc_mid_dim"],
+                self.config["num_class"],
+                bias=True
+            )
+        )
+        return bn, encoder, fc
+
+    def forward(self, input_data):
+        x = input_data[:, [0], :, :]
+        x = x.transpose(1, 2)
+        x = self.bn(x)
+        x = x.transpose(1, 2)
+        x = self.encoder(x)
+        x = x.mean(dim=2)
+        x = x.flatten(start_dim=1)
+        out = self.fc(x)
+        return out
+
+    def training_step(self, batch, batch_idx):
+        melspec, labels = batch
+        melspec, labels = self.mixup(melspec, labels)
+        labels = self.label_smoothing(labels)
+        logits = self.forward(melspec)
+        loss = self.criterion(logits, labels)
+        logit = logits.detach()
+        label = labels.detach()
+        return {"loss": loss, "logit": logit, "label": label}
+
+    def validation_step(self, batch, batch_idx):
+        melspec, labels = batch
+        logits = self.forward(melspec)
+        loss = self.criterion(logits, labels)
+        logit = logits.detach()
+        prob = logits.softmax(axis=1).detach()
+        label = labels.detach()
+        return {"loss": loss, "logit": logit, "prob": prob, "label": label}
+
+    def predict_step(self, batch, batch_idx):
+        melspec = batch
+        logits = self.forward(melspec)
+        prob = logits.softmax(axis=1).detach()
+        return {"prob": prob}
+
+    def training_epoch_end(self, outputs):
+        logits = torch.cat([out["logit"] for out in outputs])
+        labels = torch.cat([out["label"] for out in outputs])
+        metrics = self.criterion(logits, labels)
+        self.min_loss = np.nanmin([self.min_loss, metrics.detach().cpu().numpy()])
+        self.log(f"train_loss", metrics)
+
+        return super().training_epoch_end(outputs)
+
+    def validation_epoch_end(self, outputs):
+        logits = torch.cat([out["logit"] for out in outputs])
+        probs = torch.cat([out["prob"] for out in outputs])
+        labels = torch.cat([out["label"] for out in outputs])
+        metrics = self.criterion(logits, labels)
+        self.log(f"val_loss", metrics)
+
+        self.val_probs = probs.detach().cpu().numpy()
+        self.val_labels = labels.detach().cpu().numpy()
+
+        cmap = CMeanAveragePrecision(self.val_probs, self.val_labels, {"padding_num": 5}).calc()
+        self.log("cmAP", cmap)
+
+        return super().validation_epoch_end(outputs)
+
+    def configure_optimizers(self):
+        optimizer = eval(self.config["optimizer"]["name"])(
+            self.parameters(), **self.config["optimizer"]["params"]
+        )
+        scheduler = eval(self.config["scheduler"]["name"])(
+            optimizer, **self.config["scheduler"]["params"]
+        )
+        return [optimizer], [scheduler]
 
 ################################################################################
 # Attention Block
@@ -354,7 +474,7 @@ class TimmSEDBaseModel(PreTrainedModel):
         bn0 = nn.BatchNorm2d(256)
         # encoder
         base_model = timm.create_model(
-            "tf_efficientnet_b4_ns",
+            "tf_efficientnet_b2_ns",
             pretrained=self.effnet_pretrained,
             num_classes=0,
             global_pool="",
@@ -423,7 +543,7 @@ class BirdClefTimmSEDModel(LightningModule):
         att_block = AttBlockV2(
             base_model.num_features,
             self.config["num_class"],
-            activation="sigmoid"
+            activation="linear"
         )
         return base_model, linear, att_block
 
@@ -565,14 +685,23 @@ class BirdClefTimmSEDSimSiamModel(LightningModule):
         self.val_probs = np.nan
         self.val_labels = np.nan
         self.min_loss = np.nan
+        self.collapse_level = np.nan
 
     def _create_model(self):
         # encoder
         dummy_config = TimmSEDBaseConfig()
         base_model = TimmSEDBaseModel(dummy_config)
 
-        projection = SimSiamProjectionHead(base_model.num_features*10, 2048, 2048)
-        prediction = SimSiamPredictionHead(2048 ,2048, 2048)
+        projection = SimSiamProjectionHead(
+            base_model.num_features*10,
+            self.config["projection_hidden_dim"],
+            self.config["out_dim"]
+        )
+        prediction = SimSiamPredictionHead(
+            self.config["out_dim"],
+            self.config["projection_hidden_dim"],
+            self.config["out_dim"]
+        )
         return base_model, projection, prediction
 
     def forward(self, input_data):
@@ -587,11 +716,20 @@ class BirdClefTimmSEDSimSiamModel(LightningModule):
         z_0, p_0 = self.forward(melspec_0)
         z_1, p_1 = self.forward(melspec_1)
         loss = 0.5 * (self.criterion(z_0, p_1) + self.criterion(z_1, p_0))
-        return {"loss": loss}
+
+        #
+        output_norm = torch.nn.functional.normalize(p_0.detach(), dim=1)
+        return {"loss": loss, "output_norm": output_norm}
 
     def training_epoch_end(self, outputs):
-        metrics = torch.tensor([out["loss"] for out in outputs]).mean()
-        self.log(f"train_loss", metrics)
+        train_loss = torch.tensor([out["loss"] for out in outputs]).mean()
+        self.log(f"train_loss", train_loss)
+
+        output_std = torch.concat([out["output_norm"] for out in outputs], dim=0).std(dim=0)
+        output_std_mean = output_std.mean().to("cpu").numpy()
+        collapse_level = np.max([0.0, 1.0 - np.sqrt(self.config["out_dim"]) * output_std_mean])
+        self.log(f"collapse_level", collapse_level)
+        self.collapse_level = collapse_level
 
         return super().training_epoch_end(outputs)
 
