@@ -52,8 +52,8 @@ config = {
     "experiment_name": "birdclef2023-pretrain-v2",
     "run_id": None,
     "path": {
-        "traindata": "/kaggle/input/birdclef-2022-modified/train_melspec/",
-        "trainmeta": None,
+        "traindata": "/workspace/kaggle/input/pretrain_dataset_5s_v1/train_melspec_sample/",
+        "trainmeta": "/workspace/kaggle/input/pretrain_dataset_5s_v1/train_meta.csv",
         "testdata": None,
         "preddata": None,
         "temporal_dir": "../tmp/artifacts/",
@@ -61,8 +61,9 @@ config = {
         "ckpt_dir": ""
     },
     "modelname": "best_loss",
-    "init_with_checkpoint": True,
+    "init_with_checkpoint": False,
     "resume": False,
+    "upload_every_n_epochs": None,
     "sampling_rate": 32000,
     "chunk_sec": 5,
     "duration_sec": 5,
@@ -78,25 +79,27 @@ config["augmentation"] = {
     },
     "freq_mask": {
         "probability": 0.5,
-        "max": 25
+        "max": 130
     },
     "time_mask": {
-        "probability": 0.8,
-        "max": 100
+        "probability": 0.2,
+        "max": 30
     },
     "fadein": {
-        "probability": 0.8,
-        "max": 0.5
+        "probability": 0.5,
+        "max": 0.9
     },
     "fadeout": {
-        "probability": 0.8,
+        "probability": 0.3,
         "max": 0.5
     }
 }
 config["model"] = {
     "ClassName": "BirdClefTimmSEDSimSiamModel",
-    "base_model_name": "tf_efficientnet_b4_ns",
+    "base_model_name": "tf_efficientnet_b6_ns",
     "input_channels": 1,
+    "out_dim": 312,
+    "projection_hidden_dim": 1280,
     "num_class": 265,
     "n_mels": config["n_mels"],
     "gradient_checkpointing": True,
@@ -110,7 +113,7 @@ config["model"] = {
         "name": "optim.lr_scheduler.CosineAnnealingWarmRestarts",
         "params":{
             "T_0": 20,
-            "eta_min": 1e-4,
+            "eta_min": 0,
         }
     },
     "save_directory": "/workspace/data/model/birdclef2023_pretrained_v2/"
@@ -119,8 +122,8 @@ config["earlystopping"] = {
     "patience": 1
 }
 config["checkpoint"] = {
-    "dirpath": config["path"]["temporal_dir"],
-    "save_top_k": -1,
+    "dirpath": config["path"]["model_dir"],
+    "save_top_k": 1,
     "mode": "min",
     "save_last": False,
     "save_weights_only": False
@@ -128,8 +131,8 @@ config["checkpoint"] = {
 config["trainer"] = {
     "accelerator": "gpu",
     "devices": 1,
-    "max_epochs": 100,
-    "accumulate_grad_batches": 16,
+    "max_epochs": 3,
+    "accumulate_grad_batches": 1,
     "deterministic": False,
     "precision": 32
 }
@@ -156,7 +159,7 @@ config["datamodule"] = {
         "duration_sec": config["duration_sec"]
     },
     "dataloader": {
-        "batch_size": 4,
+        "batch_size": 8,
         "num_workers": 8,
     },
 }

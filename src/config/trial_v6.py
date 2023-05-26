@@ -49,14 +49,15 @@ config = {
         "yenspu1", "yertin1", "yesbar1", "yespet1", "yetgre1", "yewgre1",
         "none"
     ],
-    "experiment_name": "birdclef2023-trial-v5",
+    "experiment_name": "birdclef2023-trial-v6",
+    "run_id": None,
     "path": {
         "traindata": "/kaggle/input/birdclef-2023-oversampled-5sec/train_melspec_v1/",
-        "trainmeta": "/kaggle/input/birdclef-2023-oversampled-5sec/train_metadata_v1_3.csv",
+        "trainmeta": "/kaggle/input/birdclef-2023-oversampled-5sec/train_metadata_v1_1.csv",
         "testdata": "/kaggle/input/birdclef-2023-oversampled-5sec/train_melspec_v1/",
         "preddata": "/kaggle/input/birdclef-2023/test_soundscapes/",
         "temporal_dir": "../tmp/artifacts/",
-        "model_dir": "/kaggle/input/birdclef2023-trial-v5/",
+        "model_dir": "/kaggle/input/birdclef2023-trial-v6/",
         "ckpt_dir": "/workspace/tmp/checkpoint/"
     },
     "modelname": "best_loss",
@@ -102,10 +103,11 @@ config["augmentation"] = {
     }
 }
 config["model"] = {
-    "ClassName": "BirdClefTimmSEDModel",
-    "base_model_name": None,
+    "ClassName": "BirdClefEfficientNetModel",
+    "base_model_name": "tf_efficientnet_b0_ns",
     "input_channels": 1,
     "num_class": 265,
+    "fc_mid_dim": 2560,
     "n_mels": config["n_mels"],
     "gradient_checkpointing": True,
     "mixup": {
@@ -123,19 +125,19 @@ config["model"] = {
     "optimizer":{
         "name": "optim.RAdam",
         "params":{
-            "lr": 1e-3
+            "lr": 5e-4
         },
     },
     "scheduler":{
         "name": "optim.lr_scheduler.CosineAnnealingWarmRestarts",
         "params":{
-            "T_0": 40,
+            "T_0": 100,
             "eta_min": 0,
         }
     }
 }
 config["earlystopping"] = {
-    "patience": 3
+    "patience": 5
 }
 config["checkpoint"] = {
     "dirpath": config["path"]["model_dir"],
@@ -155,7 +157,7 @@ config["trainer"] = {
 config["datamodule"] = {
     "ClassName": "DataModule",
     "dataset":{
-        "ClassName": "BirdClefMelspecCMODataset",
+        "ClassName": "BirdClefMelspecDataset",
         "base_model_name": config["model"]["base_model_name"],
         "num_class": config["model"]["num_class"],
         "label": config["label"],
@@ -172,12 +174,7 @@ config["datamodule"] = {
         },
         "path": config["path"],
         "chunk_sec": config["chunk_sec"],
-        "duration_sec": config["duration_sec"],
-        "cmo": {
-            "oversampling_rate": 2.0,
-            "alpha": 0.5,
-            "labels": config["labels"]
-        }
+        "duration_sec": config["duration_sec"]
     },
     "dataloader": {
         "batch_size": 32,
