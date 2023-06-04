@@ -64,6 +64,7 @@ class ModelUploader(callbacks.Callback):
             )
         except:
             print(traceback.format_exc())
+            raise
 
 class Trainer:
     def __init__(
@@ -87,18 +88,22 @@ class Trainer:
         self.val_labels = ValidResult()
 
     def run(self):
-        # idx_train, idx_val = self._split_dataset(self.df_train)
-        kfold = sklearn.model_selection.StratifiedKFold(
-            n_splits=5, shuffle=True, random_state=config["random_seed"]
-        )
-        for fold, (idx_train, idx_val) in enumerate(kfold.split(self.df_train, self.df_train["label_id"])):
-            self._run_unit(fold, idx_train, idx_val)
+        try:
+            # idx_train, idx_val = self._split_dataset(self.df_train)
+            kfold = sklearn.model_selection.StratifiedKFold(
+                n_splits=5, shuffle=True, random_state=config["random_seed"]
+            )
+            for fold, (idx_train, idx_val) in enumerate(kfold.split(self.df_train, self.df_train["label_id"])):
+                self._run_unit(fold, idx_train, idx_val)
 
-        # train with all data
-        if not self.config["train_with_alldata"]:
+            # train with all data
+            if not self.config["train_with_alldata"]:
+                return
+            self._run_unit()
             return
-        self._run_unit()
-        return
+        except:
+            print(traceback.format_exc())
+            raise
 
     def _create_mlflow_logger(self, fold=None):
         # create Logger instance
@@ -243,11 +248,13 @@ class Trainer:
             print(traceback.format_exc())
             mlflow_logger.finalize("KILLED")
             mlflow_logger.experiment.delete_run(mlflow_logger.run_id)
+            raise
 
         except:
             print(traceback.format_exc())
             mlflow_logger.finalize("FAILED")
             mlflow_logger.experiment.delete_run(mlflow_logger.run_id)
+            raise
 
 
     def _train(self, datamodule, fold=None, min_delta=0.0, min_loss=None, logger=None):
@@ -314,7 +321,6 @@ class Trainer:
 
         # define trainer
         trainer = pl.Trainer(
-            logger=logger,
             **self.config["trainer"]
         )
 
