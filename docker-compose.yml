@@ -12,14 +12,11 @@ services:
            - driver: nvidia
              capabilities: ["gpu"]
     volumes:
-      - /mnt/wslg:/mnt/wslg
-      - /mnt/d/nakashimn/python/kaggle/BirdCLEF2023/:/workspace:cached
-      - /mnt/d/nakashimn/python/kaggle/BirdCLEF2023/kaggle:/kaggle:cached
-      - /mnt/c/Users/nakas/Data/birdclef-2023:/data_on_ssd:cached
+      - ./:/workspace:cached
+      - ./kaggle:/kaggle:cached
     environment:
       TZ: Asia/Tokyo
       KAGGLE_USERNAME: ${KAGGLE_USERNAME}
       KAGGLE_KEY: ${KAGGLE_KEY}
       MLFLOW_TRACKING_URI: /workspace/log/mlruns/
-      DISPLAY: host.docker.internal:0.0
     tty: true

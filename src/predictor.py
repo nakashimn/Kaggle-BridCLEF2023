@@ -1,18 +1,15 @@
 import os
-import pathlib
+import importlib
+import argparse
 import random
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import torch
-import librosa
 from torch.utils.data import DataLoader
-import pytorch_lightning as pl
 import traceback
 
 from components.preprocessor import DataPreprocessor
-from components.datamodule import BirdClefPredDataset, DataModule
-from components.models import BirdClefModel
 from config.sample import config
 
 class Predictor:

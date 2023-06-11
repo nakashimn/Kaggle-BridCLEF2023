@@ -1,6 +1,7 @@
 import os
 import subprocess
 from pytorch_lightning import callbacks
+import traceback
 
 class ModelUploader(callbacks.Callback):
     def __init__(self, model_dir, every_n_epochs=5, message=""):

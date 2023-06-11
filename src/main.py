@@ -2,39 +2,40 @@ import os
 import shutil
 import importlib
 import argparse
-import random
-import gc
-import subprocess
 import pathlib
 import glob
-import numpy as np
 import torch
 import traceback
 
+from components.utility import print_info, fix_seed
 from components.preprocessor import DataPreprocessor
 from components.trainer import Trainer
 
-def update_config(config, filepath_config):
+def update_config(
+        config: dict,
+        filepath_config: str
+    ):
     # copy ConfigFile from temporal_dir to model_dir
     dirpath_model = pathlib.Path(config["path"]["model_dir"])
+    if not os.path.exists(dirpath_model):
+        print("\033[31m" + "Warning: No Model Dir." + "\033[0m")
     filename_config = pathlib.Path(filepath_config).name
-    shutil.copy2(filepath_config, str(dirpath_model / filename_config))
+    try:
+        shutil.copy2(filepath_config, str(dirpath_model / filename_config))
+    except FileNotFoundError:
+        raise
 
-def remove_exist_models(config):
+
+def remove_exist_models(
+        config: dict
+    ):
     filepaths_ckpt = glob.glob(f"{config['path']['model_dir']}/*.ckpt")
     for fp in filepaths_ckpt:
         os.remove(fp)
 
-def fix_seed(seed):
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-def import_classes(config):
+def import_classes(
+        config: dict
+    ):
     # import Classes dynamically
     Model = getattr(
         importlib.import_module(f"components.models"),
@@ -49,17 +50,20 @@ def import_classes(config):
         config["datamodule"]["ClassName"]
     )
     Augmentation = getattr(
-        importlib.import_module(f"components.augmentation"),
+        importlib.import_module(f"components.augmentations"),
         config["augmentation"]["ClassName"]
     )
     # debug message
-    print("================================================")
-    print(f"Components:")
-    print(f"  Model        : {Model.__name__}")
-    print(f"  Dataset      : {Dataset.__name__}")
-    print(f"  DataModule   : {DataModule.__name__}")
-    print(f"  Augmentation : {Augmentation.__name__}")
-    print("================================================")
+    print_info(
+        {
+            "Components": {
+                "Model": Model.__name__,
+                "Dataset": Dataset.__name__,
+                "DataModule": DataModule.__name__,
+                "Augmentation": Augmentation.__name__
+            }
+        }
+    )
     return Model, Dataset, DataModule, Augmentation
 
 def get_args():

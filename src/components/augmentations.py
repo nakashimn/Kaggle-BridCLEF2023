@@ -5,20 +5,23 @@ from torchvision import transforms as Tv
 from torchaudio import transforms as Ta
 import traceback
 
+################################################################################
+# AudioAugmentation
+################################################################################
 class SoundAugmentation:
     def __init__(
-        self,
-        sampling_rate=32000,
-        n_fft=2048,
-        ratio_harmonic=0.0,
-        ratio_pitch_shift=0.0,
-        ratio_percussive=0.0,
-        ratio_time_stretch=0.0,
-        range_harmonic_margin=[1, 3],
-        range_n_step_pitch_shift=[-0.5, 0.5],
-        range_percussive_margin=[1, 3],
-        range_rate_time_stretch=[0.9, 1.1]
-    ):
+            self,
+            sampling_rate: int = 32000,
+            n_fft: int = 2048,
+            ratio_harmonic: float = 0.0,
+            ratio_pitch_shift: float = 0.0,
+            ratio_percussive: float = 0.0,
+            ratio_time_stretch: float = 0.0,
+            range_harmonic_margin: list[int, int] = [1, 3],
+            range_n_step_pitch_shift: list[float, float] = [-0.5, 0.5],
+            range_percussive_margin: list[int, int] = [1, 3],
+            range_rate_time_stretch: list[float, float] = [0.9, 1.1]
+        ) -> None:
         # const
         self.sampling_rate = sampling_rate
         self.n_fft = n_fft
@@ -47,10 +50,16 @@ class SoundAugmentation:
             },
         }
 
-    def __call__(self, snd):
+    def __call__(
+            self,
+            snd: np.ndarray
+        ) -> np.ndarray:
         return self.run(snd)
 
-    def run(self, snd):
+    def run(
+            self,
+            snd: np.ndarray
+        ) -> np.ndarray:
         # check length
         if len(snd) < self.n_fft:
             return snd
@@ -83,14 +92,23 @@ class SoundAugmentation:
             snd = librosa.effects.time_stretch(snd, rate=time_stretch_rate)
         return snd
 
-    def _is_applied(self, ratio):
+    def _is_applied(
+            self,
+            ratio: float
+        ) -> bool:
         return np.random.choice([True,False], p=[ratio, 1-ratio])
 
 class Fadein:
-    def __init__(self, ratio=0.5):
+    def __init__(
+            self,
+            ratio: float = 0.5
+        ) -> None:
         self.ratio = ratio
 
-    def __call__(self, x):
+    def __call__(
+            self,
+            x: np.ndarray
+        ) -> np.ndarray:
         fade_gain = np.random.uniform(
             1.0 / (x.shape[2] * self.ratio), 1.0
         )
@@ -101,10 +119,16 @@ class Fadein:
         return x * weights
 
 class Fadeout:
-    def __init__(self, ratio=0.5):
+    def __init__(
+            self,
+            ratio: float = 0.5
+        ) -> None:
         self.ratio = ratio
 
-    def __call__(self, x):
+    def __call__(
+            self,
+            x: np.ndarray
+        ):
         fade_gain = np.random.uniform(
             1.0 / (x.shape[2] * self.ratio), 1.0
         )
@@ -118,36 +142,64 @@ class Fadeout:
         return x * weights
 
 class Mixup:
-    def __init__(self, alpha=0.01, device="cuda"):
+    def __init__(
+            self,
+            alpha: float = 0.01,
+            device: str = "cuda"
+        ) -> None:
         self.alpha = alpha
         self.rand_generator = torch.distributions.beta.Beta(alpha, alpha)
 
-    def __call__(self, melspec, label):
-        return self.run(melspec, label)
+    def __call__(
+            self,
+            img: torch.Tensor,
+            label: torch.Tensor
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.run(img, label)
 
-    def run(self, melspec, label):
+    def run(
+            self,
+            img: torch.Tensor,
+            label: torch.Tensor
+        ) -> tuple[torch.Tensor, torch.Tensor]:
         lam = self.rand_generator.sample()
-        melspec_mixup = lam * melspec + (1 - lam) * melspec.roll(shifts=1, dims=0)
+        img_mixup = lam * img + (1 - lam) * img.roll(shifts=1, dims=0)
         label_mixup = lam * label + (1 - lam) * label.roll(shifts=1, dims=0)
-        return melspec_mixup, label_mixup
+        return img_mixup, label_mixup
 
 class LabelSmoothing:
-    def __init__(self, eps=0.01, n_class=265, device="cuda"):
+    def __init__(
+            self,
+            eps: float = 0.01,
+            n_class: int = 3,
+            device: str = "cuda"
+        ) -> None:
         eyes = torch.eye(n_class)
         self.softlabels = torch.where(eyes<=0, eps/(n_class-1), 1-eps).to(torch.float32).to(device)
 
-    def __call__(self, label):
+    def __call__(
+            self,
+            label: torch.Tensor
+        ) -> torch.Tensor:
         return self.run(label)
 
-    def run(self, label):
+    def run(
+            self,
+            label: torch.Tensor
+        ) -> torch.Tensor:
         return torch.matmul(label.to(torch.float32), self.softlabels)
 
 class SpecAugmentation:
-    def __init__(self, config):
+    def __init__(
+            self,
+            config: dict
+        ) -> None:
         self.config = config
         self.spec_transform = self.create_spec_transform()
 
-    def create_spec_transform(self):
+    def create_spec_transform(
+            self
+        ):
         augmentations = []
         if ("pitch_shift" in self.config.keys()) and (self.config["pitch_shift"] is not None):
             pitchshift = Tv.RandomApply([
@@ -195,11 +247,23 @@ class SpecAugmentation:
             return None
         return Tv.Compose(augmentations)
 
-    def __call__(self, melspec, label=None):
-        return self.run(melspec, label)
+    def __call__(
+            self,
+            img: torch.Tensor,
+            label: torch.Tensor | None = None
+        ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        return self.run(img, label)
 
-    def run(self, melspec, label=None):
-        if label is None:
-            return self.spec_transform(melspec)
-        melspec = self.spec_transform(melspec)
-        return melspec, label
+    def run(
+            self,
+            img: torch.Tensor,
+            label: torch.Tensor | None = None
+        ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        if self.spec_transform is None:
+            if label is None:
+                return img
+            return img, label
+        else:
+            if label is None:
+                return self.spec_transform(img)
+            return self.spec_transform(img), label

@@ -1,4 +1,6 @@
 import os
+import sys
+import pathlib
 import copy
 import gc
 import datetime
@@ -7,11 +9,12 @@ import torch
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import MLFlowLogger
 from pytorch_lightning import callbacks
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 import sklearn.model_selection
 import traceback
 
-from callbacks import ModelUploader
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[0]))
+from utility import print_info
+from pl_callbacks import ModelUploader
 from validations import MinLoss, ValidResult
 
 class Trainer:
@@ -39,7 +42,7 @@ class Trainer:
         try:
             # idx_train, idx_val = self._split_dataset(self.df_train)
             kfold = sklearn.model_selection.StratifiedKFold(
-                n_splits=5, shuffle=True, random_state=config["random_seed"]
+                n_splits=5, shuffle=True, random_state=self.config["random_seed"]
             )
             for fold, (idx_train, idx_val) in enumerate(kfold.split(self.df_train, self.df_train["label_id"])):
                 self._run_unit(fold, idx_train, idx_val)
@@ -53,6 +56,40 @@ class Trainer:
             print(traceback.format_exc())
             raise
 
+    def _run_unit(self, fold=None, idx_train=None, idx_val=None):
+        # create logger
+        mlflow_logger = self._create_mlflow_logger(fold)
+
+        try:
+            # create datamodule
+            transforms = self._create_transforms()
+            datamodule = self._create_datamodule(idx_train, idx_val, transforms=transforms)
+
+            # train crossvalid models
+            min_loss = self._train(datamodule, fold=fold, logger=mlflow_logger)
+            self.min_loss.update(min_loss)
+
+            # valid
+            if datamodule.val_dataloader() is not None:
+                val_probs, val_labels = self._valid(datamodule, fold=fold, logger=mlflow_logger)
+                self.val_probs.append(val_probs)
+                self.val_labels.append(val_labels)
+
+            # log
+            mlflow_logger.finalize("FINISHED")
+
+        except KeyboardInterrupt:
+            print(traceback.format_exc())
+            mlflow_logger.finalize("KILLED")
+            mlflow_logger.experiment.delete_run(mlflow_logger.run_id)
+            raise
+
+        except:
+            print(traceback.format_exc())
+            mlflow_logger.finalize("FAILED")
+            mlflow_logger.experiment.delete_run(mlflow_logger.run_id)
+            raise
+
     def _create_mlflow_logger(self, fold=None):
         # create Logger instance
         experiment_name = f"{self.config['experiment_name']} [{self.timestamp}]"
@@ -63,22 +100,21 @@ class Trainer:
         )
         # save hyper_params
         mlflow_logger.log_hyperparams(self.config)
-        mlflow_logger.experiment.log_artifact(
-            mlflow_logger.run_id,
-            f"./config/{args.config}.py"
-        )
         # debug message
-        print("================================================")
-        print("MLflow:")
-        print(f"  experiment_name : {experiment_name}")
-        print(f"  run_name        : {run_name}")
-        print(f"  run_id          : {mlflow_logger.run_id}")
-        print("================================================")
+        print_info(
+            {
+                "MLflow": {
+                    "experiment_name": experiment_name,
+                    "run_name": run_name,
+                    "run_id": mlflow_logger.run_id
+                }
+            }
+        )
         return mlflow_logger
 
     def _create_transforms(self):
         transforms = {
-            "train": self.Augmentation(config["augmentation"]),
+            "train": self.Augmentation(self.config["augmentation"]),
             "valid": None,
             "pred": None
         }
@@ -147,7 +183,7 @@ class Trainer:
 
     def _define_callbacks(self, callback_config):
         # define earlystopping
-        earlystopping = EarlyStopping(
+        earlystopping = callbacks.EarlyStopping(
             **callback_config["earlystopping"],
             **self.config["earlystopping"]
         )
@@ -169,41 +205,6 @@ class Trainer:
             earlystopping, lr_monitor, loss_checkpoint, model_uploader
         ]
         return callback_list
-
-    def _run_unit(self, fold=None, idx_train=None, idx_val=None):
-        # create logger
-        mlflow_logger = self._create_mlflow_logger(fold)
-
-        try:
-            # create datamodule
-            transforms = self._create_transforms()
-            datamodule = self._create_datamodule(idx_train, idx_val, transforms=transforms)
-
-            # train crossvalid models
-            min_loss = self._train(datamodule, fold=fold, logger=mlflow_logger)
-            self.min_loss.update(min_loss)
-
-            # valid
-            if datamodule.val_dataloader() is not None:
-                val_probs, val_labels = self._valid(datamodule, fold=fold, logger=mlflow_logger)
-                self.val_probs.append(val_probs)
-                self.val_labels.append(val_labels)
-
-            # log
-            mlflow_logger.finalize("FINISHED")
-
-        except KeyboardInterrupt:
-            print(traceback.format_exc())
-            mlflow_logger.finalize("KILLED")
-            mlflow_logger.experiment.delete_run(mlflow_logger.run_id)
-            raise
-
-        except:
-            print(traceback.format_exc())
-            mlflow_logger.finalize("FAILED")
-            mlflow_logger.experiment.delete_run(mlflow_logger.run_id)
-            raise
-
 
     def _train(self, datamodule, fold=None, min_delta=0.0, min_loss=None, logger=None):
         # switch mode
