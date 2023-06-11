@@ -86,7 +86,6 @@ class SoundAugmentation:
     def _is_applied(self, ratio):
         return np.random.choice([True,False], p=[ratio, 1-ratio])
 
-
 class Fadein:
     def __init__(self, ratio=0.5):
         self.ratio = ratio

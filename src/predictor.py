@@ -114,14 +114,56 @@ def fix_config_for_pred(config):
         config["model"]["device"] = "cuda"
     return config
 
+def import_classes(config):
+    # import Classes dynamically
+    Model = getattr(
+        importlib.import_module(f"components.models"),
+        config["model"]["ClassName"]
+    )
+    Dataset = getattr(
+        importlib.import_module(f"components.datamodule"),
+        config["datamodule"]["dataset"]["ClassName"]
+    )
+    DataModule = getattr(
+        importlib.import_module(f"components.datamodule"),
+        config["datamodule"]["ClassName"]
+    )
+    Augmentation = getattr(
+        importlib.import_module(f"components.augmentation"),
+        config["augmentation"]["ClassName"]
+    )
+    # debug message
+    print("================================================")
+    print(f"Components:")
+    print(f"  Model        : {Model.__name__}")
+    print(f"  Dataset      : {Dataset.__name__}")
+    print(f"  DataModule   : {DataModule.__name__}")
+    print(f"  Augmentation : {Augmentation.__name__}")
+    print("================================================")
+    return Model, Dataset, DataModule, Augmentation
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-c", "--config",
+        help="stem of config filepath.",
+        type=str,
+        required=True
+    )
+    return parser.parse_args()
+
 if __name__=="__main__":
 
+    # args
+    args = get_args()
+    config = importlib.import_module(f"config.{args.config}").config
+
+    # import Classes
+    Model, Dataset, DataModule, Augmentation = import_classes(config)
+
+    # Preprocess
     fix_seed(config["random_seed"])
-
-    # fix config
     config = fix_config_for_pred(config)
-
-    # Setting Dataset
     data_preprocessor = DataPreprocessor(config)
     df_pred = data_preprocessor.pred_dataset_for_submit()
 
@@ -131,8 +173,8 @@ if __name__=="__main__":
     else:
         cls_predictor = Predictor
     predictor = cls_predictor(
-        BirdClefModel,
-        BirdClefPredDataset,
+        Model,
+        Dataset,
         df_pred,
         config,
         None

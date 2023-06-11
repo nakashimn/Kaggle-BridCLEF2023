@@ -13,7 +13,6 @@ import torch
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
-# from config.sample import config
 from config.trial_v5 import config
 from components.preprocessor import DataPreprocessor
 from components.datamodule import BirdClefDataset, BirdClefPredDataset, BirdClefMelspecDataset, DataModule

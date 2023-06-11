@@ -16,7 +16,7 @@ import traceback
 
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[0]))
 from loss_functions import FocalLoss
-from augmentation import Mixup, LabelSmoothing
+from augmentations import Mixup, LabelSmoothing
 from validations import CMeanAveragePrecision
 
 ################################################################################
