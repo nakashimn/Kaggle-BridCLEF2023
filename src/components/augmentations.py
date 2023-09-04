@@ -3,6 +3,7 @@ import librosa
 import torch
 from torchvision import transforms as Tv
 from torchaudio import transforms as Ta
+from typing import List, Tuple, Union, Optional
 import traceback
 
 ################################################################################
@@ -17,10 +18,10 @@ class SoundAugmentation:
             ratio_pitch_shift: float = 0.0,
             ratio_percussive: float = 0.0,
             ratio_time_stretch: float = 0.0,
-            range_harmonic_margin: list[int, int] = [1, 3],
-            range_n_step_pitch_shift: list[float, float] = [-0.5, 0.5],
-            range_percussive_margin: list[int, int] = [1, 3],
-            range_rate_time_stretch: list[float, float] = [0.9, 1.1]
+            range_harmonic_margin: List[int] = [1, 3],
+            range_n_step_pitch_shift: List[float] = [-0.5, 0.5],
+            range_percussive_margin: List[int] = [1, 3],
+            range_rate_time_stretch: List[float] = [0.9, 1.1]
         ) -> None:
         # const
         self.sampling_rate = sampling_rate
@@ -154,14 +155,14 @@ class Mixup:
             self,
             img: torch.Tensor,
             label: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+        ) -> Tuple[torch.Tensor]:
         return self.run(img, label)
 
     def run(
             self,
             img: torch.Tensor,
             label: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+        ) -> Tuple[torch.Tensor]:
         lam = self.rand_generator.sample()
         img_mixup = lam * img + (1 - lam) * img.roll(shifts=1, dims=0)
         label_mixup = lam * label + (1 - lam) * label.roll(shifts=1, dims=0)
@@ -250,15 +251,15 @@ class SpecAugmentation:
     def __call__(
             self,
             img: torch.Tensor,
-            label: torch.Tensor | None = None
-        ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+            label: Optional[torch.Tensor] = None
+        ) -> Union[torch.Tensor, Tuple[torch.Tensor]]:
         return self.run(img, label)
 
     def run(
             self,
             img: torch.Tensor,
-            label: torch.Tensor | None = None
-        ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+            label: Optional[torch.Tensor] = None
+        ) -> Union[torch.Tensor, Tuple[torch.Tensor]]:
         if self.spec_transform is None:
             if label is None:
                 return img
