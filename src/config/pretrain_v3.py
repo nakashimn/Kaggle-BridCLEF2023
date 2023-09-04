@@ -210,7 +210,7 @@ config["datamodule"] = {
         "duration_sec": config["duration_sec"]
     },
     "dataloader": {
-        "batch_size": 32,
+        "batch_size": 128,
         "num_workers": 8,
     },
 }
